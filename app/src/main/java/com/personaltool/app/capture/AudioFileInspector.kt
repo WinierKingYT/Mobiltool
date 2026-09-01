@@ -3,6 +3,7 @@ package com.personaltool.app.capture
 import android.media.MediaMetadataRetriever
 import com.personaltool.core.model.call.RecordingQuality
 import java.io.File
+import java.io.FileInputStream
 
 data class AudioFileInspectionResult(
     val isValid: Boolean,
@@ -16,12 +17,17 @@ data class AudioFileInspectionResult(
 
 object AudioFileInspector {
 
-    private const val MIN_VALID_FILE_SIZE_BYTES = 2048L
-    private const val MIN_VALID_DURATION_MS = 500L
+    const val MIN_VALID_FILE_SIZE_BYTES = 2048L
+    const val MIN_VALID_DURATION_MS = 500L
+    const val MIN_VALID_BITRATE_BPS = 8000L
 
+    /**
+     * Inspects a recorded audio file. Checks raw container magic bytes (ftyp atom for MP4/M4A),
+     * minimum file size, parser validity, duration, and bitrate.
+     */
     fun inspectRecordedFile(filePath: String, defaultQuality: RecordingQuality): AudioFileInspectionResult {
         val file = File(filePath)
-        if (!file.exists() || file.length() < MIN_VALID_FILE_SIZE_BYTES) {
+        if (!file.exists() || !file.canRead()) {
             return AudioFileInspectionResult(
                 isValid = false,
                 durationMs = 0L,
@@ -29,12 +35,37 @@ object AudioFileInspector {
                 mimeType = null,
                 fileSizeBytes = if (file.exists()) file.length() else 0L,
                 determinedQuality = RecordingQuality.CORRUPT,
-                rejectionReason = "File missing or smaller than 2KB container threshold."
+                rejectionReason = "File does not exist or is unreadable."
+            )
+        }
+
+        val fileSize = file.length()
+        if (fileSize < MIN_VALID_FILE_SIZE_BYTES) {
+            return AudioFileInspectionResult(
+                isValid = false,
+                durationMs = 0L,
+                bitrate = 0L,
+                mimeType = null,
+                fileSizeBytes = fileSize,
+                determinedQuality = RecordingQuality.CORRUPT,
+                rejectionReason = "File size (${fileSize}B) is below minimum threshold (${MIN_VALID_FILE_SIZE_BYTES}B)."
+            )
+        }
+
+        if (!isValidM4AContainerHeader(file)) {
+            return AudioFileInspectionResult(
+                isValid = false,
+                durationMs = 0L,
+                bitrate = 0L,
+                mimeType = null,
+                fileSizeBytes = fileSize,
+                determinedQuality = RecordingQuality.CORRUPT,
+                rejectionReason = "Corrupted container: Missing standard MP4/M4A ftyp header signature."
             )
         }
 
         val retriever = MediaMetadataRetriever()
-        return runCatching {
+        return try {
             retriever.setDataSource(file.absolutePath)
             val durationStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
             val bitrateStr = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)
@@ -43,39 +74,74 @@ object AudioFileInspector {
             val durationMs = durationStr?.toLongOrNull() ?: 0L
             val bitrate = bitrateStr?.toLongOrNull() ?: 0L
 
-            if (durationMs < MIN_VALID_DURATION_MS) {
-                AudioFileInspectionResult(
-                    isValid = false,
-                    durationMs = durationMs,
-                    bitrate = bitrate,
-                    mimeType = mimeType,
-                    fileSizeBytes = file.length(),
-                    determinedQuality = RecordingQuality.SILENT,
-                    rejectionReason = "Duration less than minimum 500ms threshold."
-                )
-            } else {
-                AudioFileInspectionResult(
-                    isValid = true,
-                    durationMs = durationMs,
-                    bitrate = bitrate,
-                    mimeType = mimeType,
-                    fileSizeBytes = file.length(),
-                    determinedQuality = defaultQuality,
-                    rejectionReason = null
-                )
+            when {
+                durationMs < MIN_VALID_DURATION_MS -> {
+                    AudioFileInspectionResult(
+                        isValid = false,
+                        durationMs = durationMs,
+                        bitrate = bitrate,
+                        mimeType = mimeType,
+                        fileSizeBytes = fileSize,
+                        determinedQuality = RecordingQuality.SILENT,
+                        rejectionReason = "Duration (${durationMs}ms) is below minimum threshold (${MIN_VALID_DURATION_MS}ms)."
+                    )
+                }
+                bitrate > 0 && bitrate < MIN_VALID_BITRATE_BPS -> {
+                    AudioFileInspectionResult(
+                        isValid = false,
+                        durationMs = durationMs,
+                        bitrate = bitrate,
+                        mimeType = mimeType,
+                        fileSizeBytes = fileSize,
+                        determinedQuality = RecordingQuality.CORRUPT,
+                        rejectionReason = "Bitrate (${bitrate}bps) is suspiciously low (< ${MIN_VALID_BITRATE_BPS}bps)."
+                    )
+                }
+                else -> {
+                    AudioFileInspectionResult(
+                        isValid = true,
+                        durationMs = durationMs,
+                        bitrate = bitrate,
+                        mimeType = mimeType,
+                        fileSizeBytes = fileSize,
+                        determinedQuality = defaultQuality,
+                        rejectionReason = null
+                    )
+                }
             }
-        }.getOrElse { err ->
+        } catch (err: Exception) {
             AudioFileInspectionResult(
                 isValid = false,
                 durationMs = 0L,
                 bitrate = 0L,
                 mimeType = null,
-                fileSizeBytes = file.length(),
+                fileSizeBytes = fileSize,
                 determinedQuality = RecordingQuality.CORRUPT,
-                rejectionReason = "Media parser failed: ${err.message}"
+                rejectionReason = "MediaMetadataRetriever decoding failed: ${err.message}"
             )
-        }.also {
+        } finally {
             runCatching { retriever.release() }
+        }
+    }
+
+    /**
+     * Verifies if the first bytes match ISO Base Media File Format (MP4/M4A 'ftyp' box).
+     * Bytes 4..7 must equal "ftyp" (0x66, 0x74, 0x79, 0x70).
+     */
+    fun isValidM4AContainerHeader(file: File): Boolean {
+        if (file.length() < 8) return false
+        return try {
+            FileInputStream(file).use { input ->
+                val header = ByteArray(8)
+                val read = input.read(header)
+                if (read < 8) return false
+                header[4] == 'f'.code.toByte() &&
+                        header[5] == 't'.code.toByte() &&
+                        header[6] == 'y'.code.toByte() &&
+                        header[7] == 'p'.code.toByte()
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 }
