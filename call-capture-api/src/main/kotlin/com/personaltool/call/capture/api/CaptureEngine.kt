@@ -3,24 +3,23 @@ package com.personaltool.call.capture.api
 import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.model.call.CallLifecycleState
 import com.personaltool.core.model.call.RecordingQuality
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
 data class CaptureCapability(
     val isSupported: Boolean,
     val captureEngineType: String,
-    val chipFamily: String? = null,
-    val requiresSystemPrivilege: Boolean = false,
-    val supportedAudioFormats: List<String> = listOf("m4a", "wav"),
-    val notes: String? = null
+    val chipFamily: String,
+    val requiresSystemPrivilege: Boolean,
+    val supportedAudioFormats: List<String>,
+    val notes: String
 )
 
 data class ActiveCaptureState(
     val callId: String,
     val state: CallLifecycleState,
-    val durationSeconds: Long = 0L,
-    val currentQualityEstimate: RecordingQuality = RecordingQuality.UNKNOWN,
-    val outputFilePath: String? = null
+    val durationSeconds: Long,
+    val currentQualityEstimate: RecordingQuality,
+    val outputFilePath: String?
 )
 
 data class FinalizedRecording(

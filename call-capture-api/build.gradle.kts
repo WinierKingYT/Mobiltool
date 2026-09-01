@@ -6,6 +6,15 @@ kotlin {
     jvmToolchain(17)
 }
 
+sourceSets {
+    main {
+        java.srcDirs("src/main/kotlin")
+    }
+    test {
+        java.srcDirs("src/test/kotlin")
+    }
+}
+
 dependencies {
     implementation(project(":core-common"))
     implementation(project(":core-model"))
@@ -13,4 +22,5 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)
+    testImplementation(libs.kotlinx.coroutines.test)
 }

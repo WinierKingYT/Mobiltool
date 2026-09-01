@@ -11,15 +11,15 @@ import java.io.File
 
 class DefaultCaptureEngine(
     override val engineName: String = "TruthfulDualTierCaptureEngine",
-    private val storageDir: File = File(System.getProperty("java.io.tmpdir"), "PersonalTool/recordings")
+    private val storageDir: File = File(System.getProperty("java.io.tmpdir"), "PersonalTool/recordings"),
+    private val captureTier: CallCaptureTier = CallCaptureTier.TIER_1_STANDARD_USERSPACE,
+    private val isLoudspeakerActive: Boolean = false
 ) : CaptureEngine {
 
     private val _activeState = MutableStateFlow<ActiveCaptureState?>(null)
     override val activeState: StateFlow<ActiveCaptureState?> = _activeState.asStateFlow()
 
     private var captureStartTime = 0L
-    private var isLoudspeakerActive = false
-    private var captureTier = CallCaptureTier.TIER_1_STANDARD_USERSPACE
 
     override suspend fun checkCapability(): CaptureCapability {
         val hasSystemPrivilege = captureTier == CallCaptureTier.TIER_2_SYSTEM_COMPANION

@@ -8,7 +8,6 @@ class AudioQualityValidatorTest {
 
     @Test
     fun bothActiveTracks_yieldVerifiedBidirectional() {
-        // Generate simulated voice audio samples
         val voiceSamplesLocal = ShortArray(1000) { (15000 * Math.sin(it.toDouble())).toInt().toShort() }
         val voiceSamplesRemote = ShortArray(1000) { (12000 * Math.cos(it.toDouble())).toInt().toShort() }
 
