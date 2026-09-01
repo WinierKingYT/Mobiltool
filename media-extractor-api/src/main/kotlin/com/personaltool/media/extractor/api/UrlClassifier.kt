@@ -37,15 +37,18 @@ object UrlClassifier {
         val host = uri.host?.lowercase() ?: return UrlValidationResult.Invalid("Missing host in URL")
 
         // SSRF & Localhost Protection (Hard Invariant)
-        if (host == "localhost" || host == "127.0.0.1" || host == "::1" || host.startsWith("192.168.") || host.startsWith("10.")) {
+        if (host == "localhost" || host == "127.0.0.1" || host == "::1" || host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.16.")) {
             return UrlValidationResult.Invalid("Local and private network addresses are prohibited")
         }
 
         val platform = classify(trimmed, host)
+        val extractedId = extractPlatformId(trimmed, platform)
+
         return UrlValidationResult.Valid(
             normalizedUrl = trimmed,
             platform = platform,
-            host = host
+            host = host,
+            platformContentId = extractedId
         )
     }
 
@@ -57,13 +60,32 @@ object UrlClassifier {
             else -> MediaSource.GENERIC_URL
         }
     }
+
+    fun extractPlatformId(url: String, platform: MediaSource): String? {
+        return when (platform) {
+            MediaSource.YOUTUBE -> {
+                val match = YOUTUBE_REGEX.find(url)
+                match?.groupValues?.getOrNull(5)
+            }
+            MediaSource.INSTAGRAM -> {
+                val match = INSTAGRAM_REGEX.find(url)
+                match?.groupValues?.getOrNull(4)
+            }
+            MediaSource.X_TWITTER -> {
+                val match = X_TWITTER_REGEX.find(url)
+                match?.groupValues?.getOrNull(4)
+            }
+            else -> null
+        }
+    }
 }
 
 sealed interface UrlValidationResult {
     data class Valid(
         val normalizedUrl: String,
         val platform: MediaSource,
-        val host: String
+        val host: String,
+        val platformContentId: String? = null
     ) : UrlValidationResult
 
     data class Invalid(val reason: String) : UrlValidationResult

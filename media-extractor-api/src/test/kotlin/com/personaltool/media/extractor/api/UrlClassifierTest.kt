@@ -7,48 +7,51 @@ import org.junit.Test
 class UrlClassifierTest {
 
     @Test
-    fun youtubeUrls_areCorrectlyClassified() {
+    fun youtubeUrls_areCorrectlyClassified_withExtractedVideoId() {
         val urls = listOf(
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-            "https://youtu.be/dQw4w9WgXcQ",
-            "https://youtube.com/shorts/abcdefghijk"
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ" to "dQw4w9WgXcQ",
+            "https://youtu.be/dQw4w9WgXcQ" to "dQw4w9WgXcQ",
+            "https://youtube.com/shorts/abcdefghijk" to "abcdefghijk"
         )
 
-        for (url in urls) {
+        for ((url, expectedId) in urls) {
             val result = UrlClassifier.validateAndNormalize(url)
             assertThat(result).isInstanceOf(UrlValidationResult.Valid::class.java)
             val valid = result as UrlValidationResult.Valid
             assertThat(valid.platform).isEqualTo(MediaSource.YOUTUBE)
+            assertThat(valid.platformContentId).isEqualTo(expectedId)
         }
     }
 
     @Test
-    fun instagramUrls_areCorrectlyClassified() {
+    fun instagramUrls_areCorrectlyClassified_withShortcode() {
         val urls = listOf(
-            "https://www.instagram.com/reel/C1234567890/",
-            "https://instagram.com/p/C9876543210"
+            "https://www.instagram.com/reel/C1234567890/" to "C1234567890",
+            "https://instagram.com/p/C9876543210" to "C9876543210"
         )
 
-        for (url in urls) {
+        for ((url, expectedId) in urls) {
             val result = UrlClassifier.validateAndNormalize(url)
             assertThat(result).isInstanceOf(UrlValidationResult.Valid::class.java)
             val valid = result as UrlValidationResult.Valid
             assertThat(valid.platform).isEqualTo(MediaSource.INSTAGRAM)
+            assertThat(valid.platformContentId).isEqualTo(expectedId)
         }
     }
 
     @Test
-    fun xTwitterUrls_areCorrectlyClassified() {
+    fun xTwitterUrls_areCorrectlyClassified_withTweetId() {
         val urls = listOf(
-            "https://x.com/username/status/1234567890123456789",
-            "https://twitter.com/user/status/987654321"
+            "https://x.com/username/status/1234567890123456789" to "1234567890123456789",
+            "https://twitter.com/user/status/987654321" to "987654321"
         )
 
-        for (url in urls) {
+        for ((url, expectedId) in urls) {
             val result = UrlClassifier.validateAndNormalize(url)
             assertThat(result).isInstanceOf(UrlValidationResult.Valid::class.java)
             val valid = result as UrlValidationResult.Valid
             assertThat(valid.platform).isEqualTo(MediaSource.X_TWITTER)
+            assertThat(valid.platformContentId).isEqualTo(expectedId)
         }
     }
 
@@ -73,7 +76,8 @@ class UrlClassifierTest {
             "http://localhost/test",
             "http://127.0.0.1:8080/exploit",
             "https://192.168.1.1/admin",
-            "http://10.0.0.1/resource"
+            "http://10.0.0.1/resource",
+            "http://172.16.0.1/internal"
         )
 
         for (url in prohibited) {
