@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.personaltool.app.audio.AmbientMicRecorder
 import com.personaltool.app.audio.RealAudioPlayer
+import com.personaltool.app.capture.CallCaptureCapabilityDetector
 import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
 import com.personaltool.core.model.call.CallSession
@@ -26,6 +27,7 @@ class CallsViewModel(
 
     val recorder = AmbientMicRecorder(application.applicationContext)
     val player = RealAudioPlayer(application.applicationContext)
+    val hardwareCapability = CallCaptureCapabilityDetector.detectCapability(application.applicationContext)
 
     val calls: StateFlow<List<CallSession>> = callDao.getAllCallsFlow()
         .map { entities -> entities.map { it.toDomain() } }

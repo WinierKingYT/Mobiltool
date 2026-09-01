@@ -43,6 +43,7 @@ import com.personaltool.core.designsystem.components.RecordingQualityBadge
 import com.personaltool.core.designsystem.components.TechnicalPlate
 import com.personaltool.core.designsystem.components.WaveformVisualizer
 import com.personaltool.core.designsystem.theme.IndustrialTheme
+import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.RecordingQuality
 
 @Composable
@@ -57,12 +58,38 @@ fun CallsScreen(
     val callsList by viewModel.calls.collectAsState()
     val recordingState by viewModel.recordingState.collectAsState()
     val playerState by viewModel.playerState.collectAsState()
+    val capability = viewModel.hardwareCapability
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
+        // Hardware Capability Diagnostic Strip
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colors.surfaceSecondary)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                GlowLed(
+                    color = if (capability.tier == CallCaptureTier.TIER_2_SYSTEM_COMPANION) LedColor.GREEN else LedColor.AMBER,
+                    isPulsing = false,
+                    label = if (capability.tier == CallCaptureTier.TIER_2_SYSTEM_COMPANION) "TIER 2 (ALSA COMPANION)" else "TIER 1 (AOSP RESTRICTED)"
+                )
+            }
+            Text(
+                text = if (capability.isTwoWaySupported) "2-WAY CAPTURE READY" else "MIC CAPTURE ONLY",
+                style = typography.monoSmall,
+                color = if (capability.isTwoWaySupported) colors.accent else colors.textMuted
+            )
+        }
+
+        CopperDivider()
+
         // Live Audio Recorder Cockpit Banner
         Row(
             modifier = Modifier
