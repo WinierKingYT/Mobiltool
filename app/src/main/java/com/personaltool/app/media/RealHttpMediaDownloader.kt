@@ -7,15 +7,14 @@ import com.personaltool.core.model.media.MediaFormatOption
 import com.personaltool.core.model.media.MediaItem
 import com.personaltool.core.model.media.MediaSource
 import com.personaltool.core.model.media.MediaType
+import com.personaltool.media.extractor.api.DefaultMediaExtractor
+import com.personaltool.media.extractor.api.DownloadRequest
+import com.personaltool.media.extractor.api.FileValidationResult
+import com.personaltool.media.extractor.api.MediaFileValidator
+import com.personaltool.media.extractor.api.MediaProbeResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.io.FileOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.util.UUID
 
 data class RealProbeResult(
@@ -29,64 +28,28 @@ data class RealProbeResult(
 
 class RealHttpMediaDownloader(private val context: Context) {
 
-    private val _activeDownloads = MutableStateFlow<Map<String, MediaItem>>(emptyMap())
-    val activeDownloads: StateFlow<Map<String, MediaItem>> = _activeDownloads.asStateFlow()
+    private val extractor = DefaultMediaExtractor()
 
     suspend fun probeUrl(rawUrl: String): AppResult<RealProbeResult> = withContext(Dispatchers.IO) {
-        runCatching {
-            val url = URL(rawUrl.trim())
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "HEAD"
-                connectTimeout = 8000
-                readTimeout = 8000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) PersonalToolMediaEngine/1.0")
-            }
-            conn.connect()
-
-            val contentLength = conn.contentLengthLong.coerceAtLeast(0L)
-            val contentType = conn.contentType ?: "video/mp4"
-            conn.disconnect()
-
-            val filename = rawUrl.substringAfterLast("/").substringBefore("?").ifBlank { "media_${System.currentTimeMillis()}" }
-            val platform = when {
-                rawUrl.contains("youtube.com") || rawUrl.contains("youtu.be") -> MediaSource.YOUTUBE
-                rawUrl.contains("instagram.com") -> MediaSource.INSTAGRAM
-                rawUrl.contains("x.com") || rawUrl.contains("twitter.com") -> MediaSource.X_TWITTER
-                else -> MediaSource.GENERIC_URL
-            }
-
-            val formats = listOf(
-                MediaFormatOption(
-                    formatId = "hq-video",
-                    ext = if (contentType.contains("audio")) "m4a" else "mp4",
-                    resolution = if (contentType.contains("audio")) "Audio HQ" else "Auto / Best Stream",
-                    fileSizeBytes = if (contentLength > 0) contentLength else null,
-                    isAudioOnly = contentType.contains("audio"),
-                    note = "Direct HTTP Stream Probe ($contentType)"
-                ),
-                MediaFormatOption(
-                    formatId = "audio-extracted",
-                    ext = "m4a",
-                    resolution = "Audio Stream (AAC)",
-                    fileSizeBytes = if (contentLength > 0) (contentLength / 4) else null,
-                    isAudioOnly = true,
-                    note = "Demuxed Audio Stream"
+        when (val result = extractor.probeUrl(rawUrl)) {
+            is AppResult.Success -> {
+                val probe: MediaProbeResult = result.data
+                val primaryFormat = probe.availableFormats.firstOrNull()
+                AppResult.Success(
+                    RealProbeResult(
+                        url = probe.url,
+                        title = probe.title,
+                        sourcePlatform = probe.sourcePlatform,
+                        contentType = primaryFormat?.note ?: "video/mp4",
+                        fileSizeBytes = primaryFormat?.fileSizeBytes ?: 0L,
+                        availableFormats = probe.availableFormats
+                    )
                 )
-            )
-
-            AppResult.Success(
-                RealProbeResult(
-                    url = rawUrl,
-                    title = filename,
-                    sourcePlatform = platform,
-                    contentType = contentType,
-                    fileSizeBytes = contentLength,
-                    availableFormats = formats
-                )
-            )
-        }.getOrElse { err ->
-            AppResult.Error("Probe failed: ${err.localizedMessage ?: "Invalid URL or network timeout"}")
+            }
+            is AppResult.Error -> {
+                AppResult.Error(result.message, result.cause, result.code)
+            }
+            AppResult.Loading -> AppResult.Loading
         }
     }
 
@@ -100,74 +63,46 @@ class RealHttpMediaDownloader(private val context: Context) {
         val ext = selectedFormat.ext
         val outputFile = File(mediaDir, "media_${downloadId}.$ext")
 
-        val mediaItem = MediaItem(
+        val isAudio = selectedFormat.isAudioOnly
+        val request = DownloadRequest(
             id = downloadId,
             sourceUrl = probe.url,
-            title = probe.title,
-            localFilePath = outputFile.absolutePath,
-            mediaType = if (selectedFormat.isAudioOnly) MediaType.AUDIO_ONLY else MediaType.VIDEO,
-            sourcePlatform = probe.sourcePlatform,
-            formatSelected = selectedFormat.formatId,
-            fileSizeBytes = probe.fileSizeBytes,
-            downloadStatus = DownloadStatus.DOWNLOADING,
-            downloadProgressPercent = 0
+            formatId = selectedFormat.formatId,
+            destinationPath = outputFile.absolutePath,
+            targetType = if (isAudio) MediaType.AUDIO_ONLY else MediaType.VIDEO
         )
 
-        _activeDownloads.value = _activeDownloads.value + (downloadId to mediaItem)
-
-        runCatching {
-            val url = URL(probe.url)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15000
-                readTimeout = 15000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) PersonalToolMediaEngine/1.0")
-            }
-            conn.connect()
-
-            val totalBytes = conn.contentLengthLong.coerceAtLeast(1L)
-            var downloadedBytes = 0L
-            val buffer = ByteArray(16384)
-
-            conn.inputStream.use { input ->
-                FileOutputStream(outputFile).use { output ->
-                    var bytesRead: Int
-                    var lastUpdate = System.currentTimeMillis()
-
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        downloadedBytes += bytesRead
-
-                        val now = System.currentTimeMillis()
-                        if (now - lastUpdate > 150) {
-                            val percent = if (totalBytes > 0) ((downloadedBytes * 100) / totalBytes).toInt() else 50
-                            onProgress(percent, downloadedBytes)
-                            _activeDownloads.value = _activeDownloads.value + (downloadId to mediaItem.copy(
-                                downloadProgressPercent = percent,
-                                fileSizeBytes = downloadedBytes
-                            ))
-                            lastUpdate = now
-                        }
-                    }
+        when (val result = extractor.downloadMedia(request) { progress ->
+            onProgress(progress.percent, progress.bytesDownloaded)
+        }) {
+            is AppResult.Success -> {
+                // Post-process file validation: Ensure non-zero bytes and valid container
+                val validation = MediaFileValidator.validateFile(outputFile)
+                if (validation is FileValidationResult.Invalid) {
+                    outputFile.delete()
+                    return@withContext AppResult.Error("Media validation failed: ${validation.reason}")
                 }
-            }
-            conn.disconnect()
 
-            val completedItem = mediaItem.copy(
-                downloadStatus = DownloadStatus.COMPLETED,
-                downloadProgressPercent = 100,
-                fileSizeBytes = outputFile.length()
-            )
-            _activeDownloads.value = _activeDownloads.value + (downloadId to completedItem)
-            AppResult.Success(completedItem)
-        }.getOrElse { err ->
-            outputFile.delete()
-            val failedItem = mediaItem.copy(
-                downloadStatus = DownloadStatus.FAILED,
-                downloadProgressPercent = 0
-            )
-            _activeDownloads.value = _activeDownloads.value + (downloadId to failedItem)
-            AppResult.Error("Download failed: ${err.message}")
+                val completedItem = MediaItem(
+                    id = downloadId,
+                    sourceUrl = probe.url,
+                    title = probe.title,
+                    localFilePath = outputFile.absolutePath,
+                    mediaType = if (isAudio) MediaType.AUDIO_ONLY else MediaType.VIDEO,
+                    sourcePlatform = probe.sourcePlatform,
+                    formatSelected = selectedFormat.formatId,
+                    resolution = selectedFormat.resolution,
+                    fileSizeBytes = outputFile.length(),
+                    downloadStatus = DownloadStatus.COMPLETED,
+                    downloadProgressPercent = 100
+                )
+                AppResult.Success(completedItem)
+            }
+            is AppResult.Error -> {
+                outputFile.delete()
+                AppResult.Error(result.message, result.cause, result.code)
+            }
+            AppResult.Loading -> AppResult.Loading
         }
     }
 }
