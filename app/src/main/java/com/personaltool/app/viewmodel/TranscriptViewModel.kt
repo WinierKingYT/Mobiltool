@@ -118,7 +118,7 @@ class TranscriptViewModel(
             )
 
             when (val result = transcriptionEngine.transcribe(request) { progress: TranscriptionProgress ->
-                _uiState.update { it.copy(progressPercent = progress.progressPercent) }
+                _uiState.update { it.copy(progressPercent = progress.percent) }
             }) {
                 is AppResult.Success -> {
                     val transcript = result.data
