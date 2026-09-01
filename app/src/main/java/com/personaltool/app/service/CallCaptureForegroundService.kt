@@ -1,6 +1,5 @@
 package com.personaltool.app.service
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
@@ -15,10 +14,8 @@ import androidx.core.app.NotificationCompat
 import com.personaltool.app.PersonalToolApplication
 import com.personaltool.app.capture.AudioFileInspector
 import com.personaltool.app.capture.CallCaptureCapabilityDetector
-import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
 import com.personaltool.core.model.call.CallSession
-import com.personaltool.core.model.call.RecordingQuality
 import com.personaltool.core.storage.entity.CallEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +31,7 @@ class CallCaptureForegroundService : Service() {
     private var startTimeMs: Long = 0L
     private var activePhoneNumber: String = "UNKNOWN"
     private var activeDirection: CallDirection = CallDirection.INCOMING
+    private var isRecordingActive = false
 
     companion object {
         const val ACTION_START_CALL_CAPTURE = "com.personaltool.action.START_CALL_CAPTURE"
@@ -52,16 +50,20 @@ class CallCaptureForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_CALL_CAPTURE -> {
-                activePhoneNumber = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown Caller"
-                val isIncoming = intent.getBooleanExtra(EXTRA_IS_INCOMING, true)
-                activeDirection = if (isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING
-                startForegroundWithNotification()
-                startRecordingSession()
+                if (!isRecordingActive) {
+                    activePhoneNumber = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown Caller"
+                    val isIncoming = intent.getBooleanExtra(EXTRA_IS_INCOMING, true)
+                    activeDirection = if (isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING
+                    startForegroundWithNotification()
+                    startRecordingSession()
+                }
             }
             ACTION_STOP_CALL_CAPTURE -> {
-                stopRecordingSession()
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
+                if (isRecordingActive) {
+                    stopRecordingSession()
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
+                }
             }
         }
         return START_NOT_STICKY
@@ -116,7 +118,9 @@ class CallCaptureForegroundService : Service() {
                 start()
             }
             recorder = mediaRecorder
+            isRecordingActive = true
         }.onFailure {
+            // Fallback to standard MIC source if VOICE_COMMUNICATION is rejected
             runCatching {
                 val fallbackRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     MediaRecorder(this)
@@ -134,25 +138,31 @@ class CallCaptureForegroundService : Service() {
                     start()
                 }
                 recorder = fallbackRecorder
+                isRecordingActive = true
+            }.onFailure {
+                isRecordingActive = false
+                releaseWakeLock()
             }
         }
     }
 
     private fun stopRecordingSession() {
+        isRecordingActive = false
         val file = currentOutputFile
         val endTimeMs = System.currentTimeMillis()
-        val durationMs = (endTimeMs - startTimeMs).coerceAtLeast(0L)
 
-        runCatching {
+        try {
             recorder?.apply {
                 stop()
                 reset()
                 release()
             }
+        } catch (_: Exception) {
+            // Safe teardown
+        } finally {
             recorder = null
+            releaseWakeLock()
         }
-
-        releaseWakeLock()
 
         if (file != null && file.exists()) {
             val capability = CallCaptureCapabilityDetector.detectCapability(this)
@@ -191,7 +201,7 @@ class CallCaptureForegroundService : Service() {
     private fun acquireWakeLock() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         wakeLock = powerManager?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Mobiltool::CallCaptureWakeLock")?.apply {
-            acquire(45 * 60 * 1000L)
+            acquire(45 * 60 * 1000L) // 45-minute safety threshold
         }
     }
 
@@ -200,8 +210,8 @@ class CallCaptureForegroundService : Service() {
             if (wakeLock?.isHeld == true) {
                 wakeLock?.release()
             }
-            wakeLock = null
         }
+        wakeLock = null
     }
 
     private fun createNotificationChannel() {
@@ -221,7 +231,9 @@ class CallCaptureForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        stopRecordingSession()
+        if (isRecordingActive) {
+            stopRecordingSession()
+        }
         super.onDestroy()
     }
 }
