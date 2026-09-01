@@ -38,24 +38,24 @@ class CallsViewModel(
     val recordingState = recorder.state
     val playerState = player.state
 
-    fun startLiveRecording(phoneNumber: String = "+90 532 100 2030", contactName: String? = "Ambient Audio Session") {
+    fun startLiveRecording() {
         val sessionId = UUID.randomUUID().toString()
         recorder.startRecording(sessionId)
     }
 
-    fun stopLiveRecording(phoneNumber: String = "+90 532 100 2030", contactName: String? = "Ambient Audio Session") {
+    fun stopLiveRecording() {
         val recordedPath = recorder.stopRecording() ?: return
         val file = File(recordedPath)
         if (!file.exists() || file.length() == 0L) return
 
         val durationMs = (recordingState.value.durationSeconds * 1000L).coerceAtLeast(1000L)
 
-        // Truth Pass: Ambient mic recording is ONE_SIDED by physical reality on Android 9+
+        // Truth Pass: Manual mic tests are strictly LOCAL_AMBIENT_MEMO, not fake incoming calls
         val session = CallSession(
             id = UUID.randomUUID().toString(),
-            phoneNumber = phoneNumber,
-            contactName = contactName,
-            direction = CallDirection.INCOMING,
+            phoneNumber = "LOCAL_MIC",
+            contactName = "Local Ambient Mic Memo",
+            direction = CallDirection.LOCAL_AMBIENT_MEMO,
             startTimeEpochMs = System.currentTimeMillis() - durationMs,
             endTimeEpochMs = System.currentTimeMillis(),
             durationMs = durationMs,

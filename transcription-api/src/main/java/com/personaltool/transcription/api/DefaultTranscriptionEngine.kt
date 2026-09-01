@@ -2,21 +2,23 @@ package com.personaltool.transcription.api
 
 import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.model.transcript.Transcript
-import com.personaltool.core.model.transcript.TranscriptSegment
-import com.personaltool.core.model.transcript.TranscriptStatus
 import java.io.File
-import java.util.UUID
 
+/**
+ * Honest Transcription Engine:
+ * Reports actual implementation status. On-device C++/JNI Whisper runtime is currently
+ * unlinked, so it refuses to generate fake transcripts and truthfully returns ENGINE_UNAVAILABLE.
+ */
 class DefaultTranscriptionEngine(
-    override val engineName: String = "TruthfulWhisperEngine",
+    override val engineName: String = "UnlinkedLocalWhisperEngine",
     private val modelFile: File = File(System.getProperty("java.io.tmpdir"), "PersonalTool/models/whisper-tiny.tflite")
 ) : TranscriptionEngine {
 
     override suspend fun checkModelStatus(): ModelStatus {
         val exists = modelFile.exists() && modelFile.length() > 1024 * 1024
         return ModelStatus(
-            isReady = exists,
-            modelName = if (exists) "Whisper-Tiny-Quantized" else "Whisper-Tiny (Not Downloaded)",
+            isReady = false, // Not ready because inference runtime (C++/JNI Whisper) is not yet linked
+            modelName = if (exists) "Whisper-Tiny (Model on disk, Native Runner Unlinked)" else "Whisper-Tiny (Not Present)",
             modelSizeBytes = if (exists) modelFile.length() else 0L,
             isDownloading = false
         )
@@ -31,42 +33,12 @@ class DefaultTranscriptionEngine(
             return AppResult.Error("Transcription failed: Audio source file does not exist on disk.")
         }
 
-        // Truth Pass: Check compute target and model availability
-        if (request.computeTarget == TranscriptionComputeTarget.LOCAL_DEVICE_QUANTIZED) {
-            val status = checkModelStatus()
-            if (!status.isReady) {
-                return AppResult.Error(
-                    "On-device Whisper model file (whisper-tiny.tflite) not found in local app storage. " +
-                    "Download the 39MB model or switch Compute Target to Desktop GPU Offload."
-                )
-            }
-        }
-
-        // If offload or valid model file is present, decode audio
-        val segments = listOf(
-            TranscriptSegment(
-                id = UUID.randomUUID().toString(),
-                startTimeMs = 0L,
-                endTimeMs = 5000L,
-                text = "Ses dosyası başarıyla analiz edildi.",
-                speakerTag = "LOCAL",
-                confidence = 0.95f
-            )
+        // Truth Gate: Refuse to fabricate fake transcription text
+        return AppResult.Error(
+            "STT_RUNTIME_UNAVAILABLE: Local on-device Whisper C++ inference engine is not yet linked. " +
+            "Fabricated placeholder transcripts have been purged. " +
+            "Please use Desktop GPU Offload or wait for native libwhisper.so JNI binding."
         )
-
-        onProgress(TranscriptionProgress(targetId = request.targetId, progressPercent = 100, latestSegment = segments.first()))
-
-        val transcript = Transcript(
-            id = UUID.randomUUID().toString(),
-            targetId = request.targetId,
-            language = if (request.language == "auto") "tr" else request.language,
-            status = TranscriptStatus.READY,
-            segments = segments,
-            confidence = 0.95f,
-            createdAt = System.currentTimeMillis()
-        )
-
-        return AppResult.Success(transcript)
     }
 
     override suspend fun cancelTranscription(targetId: String): AppResult<Unit> {

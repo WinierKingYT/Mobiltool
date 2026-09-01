@@ -25,7 +25,8 @@ enum class CallDirection {
     INCOMING,
     OUTGOING,
     MISSED,
-    REJECTED
+    REJECTED,
+    LOCAL_AMBIENT_MEMO
 }
 
 enum class CallLifecycleState {

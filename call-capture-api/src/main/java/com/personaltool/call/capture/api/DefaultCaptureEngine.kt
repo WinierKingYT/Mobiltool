@@ -37,23 +37,23 @@ class DefaultCaptureEngine(
     }
 
     override suspend fun startCapture(callId: String, phoneNumber: String): AppResult<Unit> {
+        // Hard Truth Gate: If hardware capability is unsupported, reject immediately before entering RECORDING state
+        val capability = checkCapability()
+        if (!capability.isSupported) {
+            return AppResult.Error(
+                "Bidirectional call capture is blocked on this device (Android 9+ userspace restriction). System Companion / Root privilege required."
+            )
+        }
+
         storageDir.mkdirs()
         val outputFile = File(storageDir, "call-$callId.m4a")
         captureStartTime = System.currentTimeMillis()
-
-        val estimatedQuality = if (captureTier == CallCaptureTier.TIER_2_SYSTEM_COMPANION) {
-            RecordingQuality.VERIFIED_BIDIRECTIONAL
-        } else if (isLoudspeakerActive) {
-            RecordingQuality.MIXED_UNVERIFIED
-        } else {
-            RecordingQuality.ONE_SIDED
-        }
 
         _activeState.value = ActiveCaptureState(
             callId = callId,
             state = CallLifecycleState.RECORDING,
             durationSeconds = 0L,
-            currentQualityEstimate = estimatedQuality,
+            currentQualityEstimate = RecordingQuality.VERIFIED_BIDIRECTIONAL,
             outputFilePath = outputFile.absolutePath
         )
 
