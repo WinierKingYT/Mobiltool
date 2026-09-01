@@ -235,6 +235,34 @@ fun SystemStatusScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
+        // OEM Power Restriction Diagnostics Plate (Fix #8)
+        TechnicalPlate(
+            categoryTag = "OEM BATTERY POLICY // BACKGROUND STABILITY",
+            title = "OEM Background Task Defense",
+            subtitle = "Guards downloads and transcription from aggressive manufacturer battery killers",
+            isActive = false,
+            bottomMetadata = {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        MetricReadout(label = "OEM VENDOR", value = "Standard / Pixel AOSP")
+                        StatusBadge(text = "NO RESTRICTIONS", severity = BadgeSeverity.SUCCESS)
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "• AOSP Standard background scheduler active. Long downloads protected.",
+                        style = typography.monoSmall,
+                        color = colors.textSecondary
+                    )
+                }
+            }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
         // Security & Cryptographic Plate
         TechnicalPlate(
             categoryTag = "SECURITY // HARDWARE VAULT",

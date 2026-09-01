@@ -98,6 +98,24 @@ fun RemoteDesktopViewerScreen(
 
         CopperDivider()
 
+        // UAC Secure Desktop Active Warning Banner (Fix #4)
+        if (session.isUacPromptActive) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.warning.copy(alpha = 0.25f))
+                    .padding(8.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = "⚠️ WINDOWS UAC SECURE DESKTOP ACTIVE (APPROVE ELEVATION ON HOST PC)",
+                    style = typography.monoSmall,
+                    color = colors.warning
+                )
+            }
+            CopperDivider()
+        }
+
         // Live Desktop Surface Viewport
         Box(
             modifier = Modifier

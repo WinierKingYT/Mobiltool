@@ -4,10 +4,16 @@ import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.model.transcript.Transcript
 import com.personaltool.core.model.transcript.TranscriptSegment
 
+enum class TranscriptionComputeTarget(val displayName: String) {
+    LOCAL_DEVICE_QUANTIZED("Local On-Device (TFLite Whisper-Tiny)"),
+    DESKTOP_GPU_OFFLOAD("Desktop Bridge GPU (Fast & Zero Phone Battery)")
+}
+
 data class TranscriptionRequest(
     val targetId: String,
     val audioFilePath: String,
-    val language: String = "auto"
+    val language: String = "auto",
+    val computeTarget: TranscriptionComputeTarget = TranscriptionComputeTarget.LOCAL_DEVICE_QUANTIZED
 )
 
 data class TranscriptionProgress(

@@ -1,5 +1,10 @@
 package com.personaltool.core.model.call
 
+enum class CallCaptureTier(val displayName: String) {
+    TIER_1_STANDARD_USERSPACE("Standard User-Space (Loudspeaker/InCall)"),
+    TIER_2_SYSTEM_COMPANION("System/Root Privileged Direct Audio")
+}
+
 enum class RecordingQuality {
     VERIFIED_BIDIRECTIONAL,
     MIXED_UNVERIFIED,
@@ -44,6 +49,8 @@ data class CallSession(
     val endTimeEpochMs: Long? = null,
     val durationMs: Long = 0L,
     val recordingQuality: RecordingQuality = RecordingQuality.UNKNOWN,
+    val captureTier: CallCaptureTier = CallCaptureTier.TIER_1_STANDARD_USERSPACE,
+    val isLoudspeakerActive: Boolean = false,
     val audioFilePath: String? = null,
     val fileSizeBytes: Long = 0L,
     val hasTranscript: Boolean = false,

@@ -8,6 +8,9 @@ sealed interface AppResult<out T> {
         val code: ErrorCode = ErrorCode.UNKNOWN
     ) : AppResult<Nothing>
     data object Loading : AppResult<Nothing>
+
+    val isSuccess: Boolean
+        get() = this is Success
 }
 
 enum class ErrorCode {

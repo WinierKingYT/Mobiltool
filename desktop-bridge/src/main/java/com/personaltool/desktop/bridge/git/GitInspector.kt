@@ -29,6 +29,10 @@ object GitInspector {
             )
         }
 
+        // Check for index.lock during concurrent agent operations (Fix #10)
+        val lockFile = File(gitDir, "index.lock")
+        val isLockActive = lockFile.exists()
+
         // Parse HEAD ref for branch
         val headFile = File(gitDir, "HEAD")
         val branch = if (headFile.exists()) {
@@ -53,10 +57,14 @@ object GitInspector {
         val unstaged = if (isDirty) 1 else 0
         val untracked = 0
 
-        val lastCommitMsg = when (projectName) {
-            "PromtGen" -> "feat(auth): implement token refresh middleware"
-            "Eleven" -> "refactor(capture): optimize buffer memory layout"
-            else -> "chore: scaffold M7 desktop bridge protocol"
+        val lastCommitMsg = if (isLockActive) {
+            "⏳ Agent committing in background (index.lock active)..."
+        } else {
+            when (projectName) {
+                "PromtGen" -> "feat(auth): implement token refresh middleware"
+                "Eleven" -> "refactor(capture): optimize buffer memory layout"
+                else -> "chore: scaffold M7 desktop bridge protocol"
+            }
         }
 
         return RegisteredProject(
@@ -71,7 +79,7 @@ object GitInspector {
             aheadCount = 1,
             behindCount = 0,
             lastCommitMessage = lastCommitMsg,
-            lastCommitHash = "a3f89e1",
+            lastCommitHash = if (isLockActive) "LOCKING" else "a3f89e1",
             lastCommitTimestamp = System.currentTimeMillis() - 1800000,
             activeAgentSessionsCount = activeSessionsCount
         )

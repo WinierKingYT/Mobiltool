@@ -35,6 +35,7 @@ data class RemoteDesktopSessionState(
     val transportMode: TransportMode = TransportMode.DIRECT_LAN,
     val latencyMs: Int = 12,
     val currentFps: Int = 30,
+    val isUacPromptActive: Boolean = false,
     val lastInputFeedback: String? = null
 )
 

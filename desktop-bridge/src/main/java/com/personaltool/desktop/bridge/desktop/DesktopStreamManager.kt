@@ -18,6 +18,7 @@ class DesktopStreamManager {
                 transportMode = transportMode,
                 latencyMs = transportMode.typicalLatencyMs,
                 currentFps = it.quality.fps,
+                isUacPromptActive = false,
                 lastInputFeedback = "Session established via ${transportMode.displayName} (E2EE verified)"
             )
         }
@@ -26,7 +27,7 @@ class DesktopStreamManager {
 
     fun stopSession() {
         _sessionState.update {
-            it.copy(isConnected = false, lastInputFeedback = "Session disconnected")
+            it.copy(isConnected = false, isUacPromptActive = false, lastInputFeedback = "Session disconnected")
         }
     }
 
@@ -37,6 +38,10 @@ class DesktopStreamManager {
                 latencyMs = mode.typicalLatencyMs
             )
         }
+    }
+
+    fun setUacState(isActive: Boolean) {
+        _sessionState.update { it.copy(isUacPromptActive = isActive) }
     }
 
     fun selectDisplay(displayId: String) {
@@ -61,19 +66,25 @@ class DesktopStreamManager {
         val display = _sessionState.value.activeDisplay
         val feedback = when (event) {
             is RemoteInputEvent.Click -> {
-                val absX = (event.normalizedX * display.width).toInt()
-                val absY = (event.normalizedY * display.height).toInt()
+                val (winAbsX, winAbsY) = VirtualScreenCoordinateTransformer.transformNormalizedToWindowsAbsolute(
+                    event.normalizedX,
+                    event.normalizedY,
+                    display
+                )
                 val type = if (event.isRightClick) "Right Click" else "Left Click"
-                "Injected $type at ($absX, $absY)"
+                "Injected $type at WinAbs($winAbsX, $winAbsY)"
             }
             is RemoteInputEvent.Move -> {
-                val absX = (event.normalizedX * display.width).toInt()
-                val absY = (event.normalizedY * display.height).toInt()
-                "Pointer move to ($absX, $absY)"
+                val (winAbsX, winAbsY) = VirtualScreenCoordinateTransformer.transformNormalizedToWindowsAbsolute(
+                    event.normalizedX,
+                    event.normalizedY,
+                    display
+                )
+                "Pointer move to WinAbs($winAbsX, $winAbsY)"
             }
             is RemoteInputEvent.Scroll -> "Scroll wheel delta: ${event.deltaY}"
             is RemoteInputEvent.KeyChord -> "Key chord: ${event.modifiers.joinToString("+")}+${event.keyName}"
-            is RemoteInputEvent.Text -> "Injected text: \"${event.text}\""
+            is RemoteInputEvent.Text -> "Injected UTF-16 Unicode text: \"${event.text}\" (KEYEVENTF_UNICODE)"
         }
 
         _sessionState.update { it.copy(lastInputFeedback = feedback) }

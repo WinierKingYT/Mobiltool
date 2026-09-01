@@ -36,10 +36,10 @@ interface CallDao {
     suspend fun deleteCall(call: CallEntity)
 
     @Query("DELETE FROM calls WHERE id = :id")
-    suspend fun deleteCallById(id: String)
+    suspend fun deleteCallById(id: String): Int
 
     @Query("DELETE FROM calls")
-    suspend fun deleteAllCalls()
+    suspend fun deleteAllCalls(): Int
 
     @Query("SELECT COUNT(*) FROM calls")
     suspend fun getCallCount(): Int

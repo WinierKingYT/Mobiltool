@@ -33,10 +33,10 @@ interface MediaDao {
     suspend fun deleteMedia(item: MediaEntity)
 
     @Query("DELETE FROM media_items WHERE id = :id")
-    suspend fun deleteMediaById(id: String)
+    suspend fun deleteMediaById(id: String): Int
 
     @Query("DELETE FROM media_items")
-    suspend fun deleteAllMedia()
+    suspend fun deleteAllMedia(): Int
 
     @Query("SELECT COUNT(*) FROM media_items")
     suspend fun getMediaCount(): Int
