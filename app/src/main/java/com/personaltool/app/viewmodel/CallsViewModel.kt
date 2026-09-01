@@ -3,8 +3,8 @@ package com.personaltool.app.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.personaltool.app.audio.AmbientMicRecorder
 import com.personaltool.app.audio.RealAudioPlayer
-import com.personaltool.app.audio.RealAudioRecorder
 import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
 import com.personaltool.core.model.call.CallSession
@@ -24,7 +24,7 @@ class CallsViewModel(
     private val callDao: CallDao
 ) : AndroidViewModel(application) {
 
-    val recorder = RealAudioRecorder(application.applicationContext)
+    val recorder = AmbientMicRecorder(application.applicationContext)
     val player = RealAudioPlayer(application.applicationContext)
 
     val calls: StateFlow<List<CallSession>> = callDao.getAllCallsFlow()
@@ -38,24 +38,19 @@ class CallsViewModel(
     val recordingState = recorder.state
     val playerState = player.state
 
-    init {
-        viewModelScope.launch {
-            if (callDao.getCallCount() == 0) {
-                seedInitialCalls()
-            }
-        }
-    }
-
-    fun startLiveRecording(phoneNumber: String = "+90 532 100 2030", contactName: String? = "Live Audio Session") {
+    fun startLiveRecording(phoneNumber: String = "+90 532 100 2030", contactName: String? = "Ambient Audio Session") {
         val sessionId = UUID.randomUUID().toString()
         recorder.startRecording(sessionId)
     }
 
-    fun stopLiveRecording(phoneNumber: String = "+90 532 100 2030", contactName: String? = "Live Audio Session") {
+    fun stopLiveRecording(phoneNumber: String = "+90 532 100 2030", contactName: String? = "Ambient Audio Session") {
         val recordedPath = recorder.stopRecording() ?: return
         val file = File(recordedPath)
+        if (!file.exists() || file.length() == 0L) return
+
         val durationMs = (recordingState.value.durationSeconds * 1000L).coerceAtLeast(1000L)
 
+        // Truth Pass: Ambient mic recording is ONE_SIDED by physical reality on Android 9+
         val session = CallSession(
             id = UUID.randomUUID().toString(),
             phoneNumber = phoneNumber,
@@ -64,11 +59,11 @@ class CallsViewModel(
             startTimeEpochMs = System.currentTimeMillis() - durationMs,
             endTimeEpochMs = System.currentTimeMillis(),
             durationMs = durationMs,
-            recordingQuality = RecordingQuality.VERIFIED_BIDIRECTIONAL,
+            recordingQuality = RecordingQuality.ONE_SIDED,
             captureTier = CallCaptureTier.TIER_1_STANDARD_USERSPACE,
-            isLoudspeakerActive = true,
+            isLoudspeakerActive = false,
             audioFilePath = recordedPath,
-            fileSizeBytes = file.length().coerceAtLeast(1024L),
+            fileSizeBytes = file.length(),
             hasTranscript = false,
             isFavorite = false
         )
@@ -81,11 +76,9 @@ class CallsViewModel(
     fun playCall(call: CallSession) {
         val path = call.audioFilePath ?: return
         val file = File(path)
-        if (!file.exists()) {
-            file.parentFile?.mkdirs()
-            file.writeBytes(ByteArray(8192) { 0x1A })
+        if (file.exists() && file.length() > 0) {
+            player.loadAndPlay(path)
         }
-        player.loadAndPlay(path)
     }
 
     fun deleteCall(callId: String) {
@@ -105,43 +98,5 @@ class CallsViewModel(
         super.onCleared()
         recorder.stopRecording()
         player.stop()
-    }
-
-    private suspend fun seedInitialCalls() {
-        val storageDir = File(getApplication<Application>().filesDir, "recordings").apply { mkdirs() }
-        val sample1 = File(storageDir, "sample1.m4a").apply { if (!exists()) writeBytes(ByteArray(16384)) }
-        val sample2 = File(storageDir, "sample2.m4a").apply { if (!exists()) writeBytes(ByteArray(8192)) }
-
-        val samples = listOf(
-            CallSession(
-                id = UUID.randomUUID().toString(),
-                phoneNumber = "+90 532 555 0192",
-                contactName = "Ahmet Yilmaz",
-                direction = CallDirection.INCOMING,
-                startTimeEpochMs = System.currentTimeMillis() - 3600000,
-                endTimeEpochMs = System.currentTimeMillis() - 3416000,
-                durationMs = 184000,
-                recordingQuality = RecordingQuality.VERIFIED_BIDIRECTIONAL,
-                audioFilePath = sample1.absolutePath,
-                fileSizeBytes = sample1.length(),
-                hasTranscript = true,
-                isFavorite = true
-            ),
-            CallSession(
-                id = UUID.randomUUID().toString(),
-                phoneNumber = "+90 555 123 4567",
-                contactName = "Project Operations",
-                direction = CallDirection.OUTGOING,
-                startTimeEpochMs = System.currentTimeMillis() - 7200000,
-                endTimeEpochMs = System.currentTimeMillis() - 7135000,
-                durationMs = 65000,
-                recordingQuality = RecordingQuality.MIXED_UNVERIFIED,
-                audioFilePath = sample2.absolutePath,
-                fileSizeBytes = sample2.length(),
-                hasTranscript = false,
-                isFavorite = false
-            )
-        )
-        callDao.insertCalls(samples.map { CallEntity.fromDomain(it) })
     }
 }

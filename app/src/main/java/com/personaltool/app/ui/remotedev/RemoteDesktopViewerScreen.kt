@@ -71,12 +71,7 @@ fun RemoteDesktopViewerScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                val badgeSeverity = when (session.transportMode) {
-                    TransportMode.DIRECT_LAN -> BadgeSeverity.SUCCESS
-                    TransportMode.P2P_HOLEPUNCH -> BadgeSeverity.INFO
-                    TransportMode.RELAY_ENCRYPTED -> BadgeSeverity.WARNING
-                }
-                StatusBadge(text = "${session.transportMode.displayName.uppercase()} // E2EE", severity = badgeSeverity)
+                StatusBadge(text = "LABS // EXPERIMENTAL DESKTOP", severity = BadgeSeverity.WARNING)
                 Spacer(modifier = Modifier.width(8.dp))
                 MetricReadout(label = "LATENCY", value = "${session.latencyMs} ms", isHighlighted = true)
                 Spacer(modifier = Modifier.width(6.dp))
@@ -98,7 +93,7 @@ fun RemoteDesktopViewerScreen(
 
         CopperDivider()
 
-        // UAC Secure Desktop Active Warning Banner (Fix #4)
+        // UAC Secure Desktop Active Warning Banner
         if (session.isUacPromptActive) {
             Box(
                 modifier = Modifier
@@ -138,86 +133,28 @@ fun RemoteDesktopViewerScreen(
                 },
             contentAlignment = Alignment.Center
         ) {
-            // Simulated Windows Desktop Interactive Canvas
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(16f / 9f)
                     .background(Color(0xFF0F141C))
-                    .border(BorderStroke(1.dp, colors.border))
+                    .border(BorderStroke(1.dp, colors.border)),
+                contentAlignment = Alignment.Center
             ) {
-                // Windows UI Simulation Header
-                Column(modifier = Modifier.fillMaxSize()) {
-                    // Title Bar of active IDE / Terminal
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(24.dp)
-                            .background(Color(0xFF1E2633))
-                            .padding(horizontal = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "VS Code — PersonalMobileTool [M10: Remote Internet Control]",
-                            style = typography.monoSmall,
-                            color = colors.textSecondary
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Box(modifier = Modifier.width(8.dp).height(8.dp).background(Color(0xFF4A5568)))
-                            Box(modifier = Modifier.width(8.dp).height(8.dp).background(Color(0xFF4A5568)))
-                            Box(modifier = Modifier.width(8.dp).height(8.dp).background(Color(0xFFE53E3E)))
-                        }
-                    }
-
-                    // Simulated Code Editor Body
-                    Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .padding(12.dp)
-                    ) {
-                        Text(
-                            text = "1  // Milestone M10: Remote Internet Control & Automated Transport Fallback",
-                            style = typography.monoSmall,
-                            color = colors.textMuted
-                        )
-                        Text(
-                            text = "2  val fallbackCascade = [ DIRECT_LAN -> P2P_HOLEPUNCH -> RELAY_ENCRYPTED ]",
-                            style = typography.monoSmall,
-                            color = colors.accent
-                        )
-                        Text(
-                            text = "3  verifyEndToEndProof(deviceFingerprint, workstationFingerprint)",
-                            style = typography.monoSmall,
-                            color = colors.textPrimary
-                        )
-                        Text(
-                            text = "4  // 100% of Milestones M0 through M10 successfully implemented & verified",
-                            style = typography.monoSmall,
-                            color = colors.success
-                        )
-                    }
-
-                    // Windows Taskbar
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(28.dp)
-                            .background(Color(0xFF131822))
-                            .padding(horizontal = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(text = "⊞ START", style = typography.monoSmall, color = colors.accent)
-                            Text(text = "💻 Terminal", style = typography.monoSmall, color = colors.textSecondary)
-                            Text(text = "📝 VS Code", style = typography.monoSmall, color = colors.textPrimary)
-                        }
-                        Text(text = "17:02 // 01.09.2026", style = typography.monoSmall, color = colors.textMuted)
-                    }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    StatusBadge(text = "DESKTOP STREAM RECEIVER // STANDBY", severity = BadgeSeverity.INFO)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = "Awaiting Desktop Bridge DXGI Video Frame Pipeline",
+                        style = typography.bodyMedium,
+                        color = colors.textSecondary
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "Touch to send virtual mouse coordinates to host",
+                        style = typography.monoSmall,
+                        color = colors.textMuted
+                    )
                 }
 
                 // Input Feedback Overlay Indicator

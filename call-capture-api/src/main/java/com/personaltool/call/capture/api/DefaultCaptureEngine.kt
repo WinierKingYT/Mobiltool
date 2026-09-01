@@ -10,7 +10,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 
 class DefaultCaptureEngine(
-    override val engineName: String = "DualTierEventDrivenCaptureEngine",
+    override val engineName: String = "TruthfulDualTierCaptureEngine",
     private val storageDir: File = File(System.getProperty("java.io.tmpdir"), "PersonalTool/recordings")
 ) : CaptureEngine {
 
@@ -18,17 +18,21 @@ class DefaultCaptureEngine(
     override val activeState: StateFlow<ActiveCaptureState?> = _activeState.asStateFlow()
 
     private var captureStartTime = 0L
-    private var isLoudspeaker = true
+    private var isLoudspeakerActive = false
     private var captureTier = CallCaptureTier.TIER_1_STANDARD_USERSPACE
 
     override suspend fun checkCapability(): CaptureCapability {
+        val hasSystemPrivilege = captureTier == CallCaptureTier.TIER_2_SYSTEM_COMPANION
         return CaptureCapability(
-            isSupported = true,
-            captureEngineType = "DUAL_TIER_LOUDSPEAKER_SYSTEM",
-            chipFamily = "Qualcomm / MediaTek / Tensor reference",
-            requiresSystemPrivilege = false,
-            supportedAudioFormats = listOf("m4a", "wav", "aac"),
-            notes = "Dual-tier capture active: Standard user-space + Loudspeaker discriminator"
+            isSupported = hasSystemPrivilege,
+            captureEngineType = if (hasSystemPrivilege) "ROOT_COMPANION_ALSA" else "RESTRICTED_AOSP_USERSPACE",
+            chipFamily = "Platform Native",
+            requiresSystemPrivilege = true,
+            supportedAudioFormats = listOf("m4a", "aac"),
+            notes = if (hasSystemPrivilege)
+                "System Companion active: Bidirectional hardware stream capture enabled"
+            else
+                "Android 9+ restriction: Direct call downlink is blocked in userspace. Ambient mic only."
         )
     }
 
@@ -37,9 +41,10 @@ class DefaultCaptureEngine(
         val outputFile = File(storageDir, "call-$callId.m4a")
         captureStartTime = System.currentTimeMillis()
 
-        // Evaluates loudspeaker state for Android 9+ non-root constraint handling
-        val estimatedQuality = if (isLoudspeaker || captureTier == CallCaptureTier.TIER_2_SYSTEM_COMPANION) {
+        val estimatedQuality = if (captureTier == CallCaptureTier.TIER_2_SYSTEM_COMPANION) {
             RecordingQuality.VERIFIED_BIDIRECTIONAL
+        } else if (isLoudspeakerActive) {
+            RecordingQuality.MIXED_UNVERIFIED
         } else {
             RecordingQuality.ONE_SIDED
         }
@@ -61,15 +66,13 @@ class DefaultCaptureEngine(
         val filePath = currentState?.outputFilePath ?: File(storageDir, "call-$callId.m4a").absolutePath
         val file = File(filePath)
 
-        if (!file.exists()) {
-            file.parentFile?.mkdirs()
-            file.writeBytes(ByteArray(16384) { 0x1A }) // dummy valid audio header
+        if (!file.exists() || file.length() == 0L) {
+            _activeState.value = null
+            return AppResult.Error("Capture failed: No physical audio stream was recorded on disk.")
         }
 
-        // Assess quality from audio samples & tier
-        val quality = currentState?.currentQualityEstimate ?: RecordingQuality.VERIFIED_BIDIRECTIONAL
+        val quality = currentState?.currentQualityEstimate ?: RecordingQuality.ONE_SIDED
 
-        // Reset state immediately (Battery Invariant: zero idle cost)
         _activeState.value = null
 
         return AppResult.Success(
@@ -77,7 +80,7 @@ class DefaultCaptureEngine(
                 callId = callId,
                 audioFilePath = file.absolutePath,
                 durationMs = durationMs,
-                fileSizeBytes = file.length().coerceAtLeast(16384L),
+                fileSizeBytes = file.length(),
                 quality = quality
             )
         )

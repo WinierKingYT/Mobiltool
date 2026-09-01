@@ -14,7 +14,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
-data class RecordingState(
+data class AmbientRecordingState(
     val isRecording: Boolean = false,
     val durationSeconds: Long = 0L,
     val currentMaxAmplitude: Int = 0,
@@ -22,22 +22,28 @@ data class RecordingState(
     val errorMessage: String? = null
 )
 
-class RealAudioRecorder(private val context: Context) {
+/**
+ * Truthful Ambient Microphone Recorder:
+ * Records acoustic room/device ambient sound via MIC source.
+ * By physical definition on Android 9+, standard mic recording cannot guarantee
+ * bidirectional call capture (it captures local voice + room audio only).
+ */
+class AmbientMicRecorder(private val context: Context) {
 
     private var recorder: MediaRecorder? = null
     private var recordingJob: Job? = null
     private var currentFile: File? = null
 
-    private val _state = MutableStateFlow(RecordingState())
-    val state: StateFlow<RecordingState> = _state.asStateFlow()
+    private val _state = MutableStateFlow(AmbientRecordingState())
+    val state: StateFlow<AmbientRecordingState> = _state.asStateFlow()
 
     @Suppress("DEPRECATION")
-    fun startRecording(callOrSessionId: String): Result<String> {
+    fun startRecording(sessionId: String): Result<String> {
         return runCatching {
             stopRecording()
 
-            val dir = File(context.filesDir, "recordings").apply { mkdirs() }
-            val file = File(dir, "rec_${callOrSessionId}_${System.currentTimeMillis()}.m4a")
+            val dir = File(context.filesDir, "ambient_recordings").apply { mkdirs() }
+            val file = File(dir, "ambient_${sessionId}_${System.currentTimeMillis()}.m4a")
             currentFile = file
 
             val mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -64,7 +70,7 @@ class RealAudioRecorder(private val context: Context) {
                 while (isActive) {
                     val duration = (System.currentTimeMillis() - startTime) / 1000L
                     val amp = runCatching { recorder?.maxAmplitude ?: 0 }.getOrDefault(0)
-                    _state.value = RecordingState(
+                    _state.value = AmbientRecordingState(
                         isRecording = true,
                         durationSeconds = duration,
                         currentMaxAmplitude = amp,
@@ -76,7 +82,7 @@ class RealAudioRecorder(private val context: Context) {
 
             file.absolutePath
         }.onFailure { err ->
-            _state.value = RecordingState(isRecording = false, errorMessage = err.message)
+            _state.value = AmbientRecordingState(isRecording = false, errorMessage = err.message)
         }
     }
 
@@ -92,7 +98,7 @@ class RealAudioRecorder(private val context: Context) {
             }
             recorder = null
             val path = currentFile?.absolutePath
-            _state.value = RecordingState(isRecording = false, outputFilePath = path)
+            _state.value = AmbientRecordingState(isRecording = false, outputFilePath = path)
             path
         }.getOrNull()
     }
