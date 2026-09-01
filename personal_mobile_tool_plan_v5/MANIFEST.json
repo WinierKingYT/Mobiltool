@@ -1,0 +1,207 @@
+[
+  {
+    "file": "00_MASTER_PRODUCT_CONTRACT.md",
+    "bytes": 4947,
+    "sha256": "1a36337b1a0e942c42c7a91934f8cc7e3b865ab6e283948731817d45c9523b06"
+  },
+  {
+    "file": "01_SCOPE_BOUNDARIES_AND_INVARIANTS.md",
+    "bytes": 9816,
+    "sha256": "e048226eb015f970b54f40ae86a361fff13f1df28e4a56b0bd7a0d85117daa74"
+  },
+  {
+    "file": "02_SYSTEM_ARCHITECTURE.md",
+    "bytes": 3485,
+    "sha256": "ddb07d504994fb9ac94ca8fee444dc1dcab4da7374a5de494d940d76d71085de"
+  },
+  {
+    "file": "03_SHARED_DOMAIN_MODEL.md",
+    "bytes": 1934,
+    "sha256": "b961b43b4e56c32ff2503c386ead2a5a88fcd0cf53b98dd8d04b523380335cec"
+  },
+  {
+    "file": "04_CALL_RECORDING_SYSTEM.md",
+    "bytes": 1755,
+    "sha256": "a941eae76daf29ed0dc0cc72f1f9e3c35de1404f83c1d7018d4808fc85a0c956"
+  },
+  {
+    "file": "05_URL_INTAKE_AND_MEDIA_PROBE.md",
+    "bytes": 2042,
+    "sha256": "aad4bdadcce2aca9d2fe6a9fbd6590db49100953be3eab3ddc7a661b510e3fd2"
+  },
+  {
+    "file": "06_MEDIA_EXTRACTION_AND_DOWNLOAD_ENGINE.md",
+    "bytes": 3239,
+    "sha256": "0fe401980c21fa663bb384a4bf4eb642d540322b21c8508d6582e9bd8c158982"
+  },
+  {
+    "file": "07_FORMAT_SELECTION_AND_POSTPROCESSING.md",
+    "bytes": 2851,
+    "sha256": "9305bac57e329309bb88059b85036e800748fc22161557be768ecc68c14045f3"
+  },
+  {
+    "file": "08_MEDIA_LIBRARY_AND_ARCHIVE.md",
+    "bytes": 2062,
+    "sha256": "0703c5abb1e967c6c00a5ebe3d1e08e9370204d37c5720be3f0c140354c253e1"
+  },
+  {
+    "file": "09_TRANSCRIPTION_ENGINE.md",
+    "bytes": 2263,
+    "sha256": "247227329c8e5eabd2d261de3f4cc33c3352a96aca6fdcd4604f83f4727f97d0"
+  },
+  {
+    "file": "10_STORAGE_SECURITY_AND_PRIVACY.md",
+    "bytes": 2398,
+    "sha256": "7e95f6dd23feab75ffce60341c13b6e2811991c0d27d08c4066d008b0a2134e3"
+  },
+  {
+    "file": "11_BACKGROUND_JOBS_AND_LIFECYCLE.md",
+    "bytes": 3924,
+    "sha256": "130658702c8a8ba14781f02c4543e2068cd79435d9e374ee5b44ed4f7eb0b6f2"
+  },
+  {
+    "file": "12_ANDROID_UI_UX.md",
+    "bytes": 2548,
+    "sha256": "6b43deefcd53e8105caf2b55cceae04d4690151f3ece960f150204ff4fe7d50c"
+  },
+  {
+    "file": "13_PLATFORM_ADAPTERS_YOUTUBE_INSTAGRAM_X.md",
+    "bytes": 2600,
+    "sha256": "8a271e8a95651533e0ee6d898f22e57b1d55683385c62850243a97ef45947876"
+  },
+  {
+    "file": "14_LEGAL_POLICY_AND_CONTENT_BOUNDARIES.md",
+    "bytes": 2516,
+    "sha256": "5f54f4e6a757a8183ef9e190a4d7ac1f5449251d3fc942de7e182852c81fa088"
+  },
+  {
+    "file": "15_TESTING_RELIABILITY_AND_DEVICE_MATRIX.md",
+    "bytes": 2499,
+    "sha256": "d4761db27febfe84e3de124e35e79e99a07c6ccd9484de482edf66cf4ea6a9c5"
+  },
+  {
+    "file": "16_MILESTONES_AND_GATES.md",
+    "bytes": 2864,
+    "sha256": "3fb2bd841e8e22d1fb1a92be1b97f1882baccd56f2b451061b034b2aafdcd4a7"
+  },
+  {
+    "file": "17_AI_ENGINEERING_GUARDRAILS.md",
+    "bytes": 5423,
+    "sha256": "05d6e68936a015b5712d2026902e9d9677e401b67debc5c83f937ba3a952cdcd"
+  },
+  {
+    "file": "18_ADR_POLICY.md",
+    "bytes": 2268,
+    "sha256": "b3781038f68bdf463b0fe48ba1bf54119d424419e4f9a01f3bf39947cb2dc21c"
+  },
+  {
+    "file": "19_REMOTE_DEV_CONTROL_OVERVIEW.md",
+    "bytes": 2504,
+    "sha256": "bbc801e227040d9236ecb1d2dd048981371bddf9396a97f416a7ab831a2f2df8"
+  },
+  {
+    "file": "20_DESKTOP_BRIDGE_DAEMON.md",
+    "bytes": 2189,
+    "sha256": "4a9cdd48ec8a2a61c75ab13db73c42ec01c49479d65f87db37251dc2451cf6c4"
+  },
+  {
+    "file": "21_PROJECT_REGISTRY_AND_GIT.md",
+    "bytes": 1523,
+    "sha256": "b7fbc1c09aded7ccc8eb66eab0f529f68341ede0af87b63d26b20e9d2d6af170"
+  },
+  {
+    "file": "22_AGENT_TOOL_ADAPTERS.md",
+    "bytes": 2981,
+    "sha256": "9ebce8402c15173370e89365560c709e480423b46e0330b3315a3daa47214afc"
+  },
+  {
+    "file": "23_SECURE_PAIRING_AND_TRANSPORT.md",
+    "bytes": 2016,
+    "sha256": "9583a4c17cb35ff74d42ee51ea3131ca4dccb00724c4314907a3a7a6e09f21a7"
+  },
+  {
+    "file": "24_REMOTE_ACTIONS_APPROVALS_AND_SECURITY.md",
+    "bytes": 1974,
+    "sha256": "e04fe3f03fd638e5904b05407f1ece6bb0d86e112711ceb7098690a7d3dd199a"
+  },
+  {
+    "file": "25_REMOTE_ACCESS_BEYOND_LAN.md",
+    "bytes": 1814,
+    "sha256": "f60ee929a06aa92a7ba7fd1c336843b4efc0e66f375ee18a6d2e4f9ae7ca71f8"
+  },
+  {
+    "file": "26_POWER_THERMAL_AND_BATTERY_BUDGET.md",
+    "bytes": 3818,
+    "sha256": "9d6ab5a35577536edba891ba3a84009b0b0c4249fce1c00f1cdf5671ad880495"
+  },
+  {
+    "file": "27_CALL_BACKGROUND_ACTIVATION_AND_IDLE_MODEL.md",
+    "bytes": 2299,
+    "sha256": "c2c85f6a3aac6eb0d92a7fd9fa2fd598e1f476ce03c2ccdd8170ab518ad11b15"
+  },
+  {
+    "file": "28_RESOURCE_SCHEDULER_AND_CONCURRENCY.md",
+    "bytes": 2109,
+    "sha256": "fb2a9e1f35567dc3f1cc51ec867fadce6f50a2cb4445ffaca412af87393df1f8"
+  },
+  {
+    "file": "29_POWER_PERFORMANCE_BENCHMARK_PLAN.md",
+    "bytes": 1694,
+    "sha256": "d5720b19b45c4144d6c81a353341c53f9e1844bfdcadde229a4c07f8857a1533"
+  },
+  {
+    "file": "30_REMOTE_DESKTOP_PRODUCT_CONTRACT.md",
+    "bytes": 2653,
+    "sha256": "c7cc5c252c1fd2fcf037d5fa96cf49b185c25a94c017c34f347221765da462a0"
+  },
+  {
+    "file": "31_WINDOWS_SCREEN_CAPTURE_AND_ENCODER.md",
+    "bytes": 2664,
+    "sha256": "358191be0a19f93ead14cb51bec32c682d9a10575852f8ae7de17df50fcb613c"
+  },
+  {
+    "file": "32_REMOTE_INPUT_AND_DESKTOP_CONTROL.md",
+    "bytes": 2416,
+    "sha256": "2ed921896f94e4dd602af2b7deed8474c18bcc8ee8378dd8f9109e95953bcc23"
+  },
+  {
+    "file": "33_REMOTE_DESKTOP_TRANSPORT_AND_CODEC.md",
+    "bytes": 2038,
+    "sha256": "39b4057668d0e70430f35d4eaad50d16b228cdf32924dbdea862adde5afb92b6"
+  },
+  {
+    "file": "34_ANDROID_REMOTE_DESKTOP_CLIENT.md",
+    "bytes": 2285,
+    "sha256": "dbcb313bc8b323c13aa23ae1b38f46a044199be1aca9fa963b411de17e8ffef2"
+  },
+  {
+    "file": "35_REMOTE_DESKTOP_SECURITY_AND_SESSION_POLICY.md",
+    "bytes": 2083,
+    "sha256": "f2ed33d8f3c9d262bc9c8ca265ad980fd25a61d36e17dacad50f02a5ac9134f4"
+  },
+  {
+    "file": "36_REMOTE_DESKTOP_TESTING_AND_PERFORMANCE.md",
+    "bytes": 1606,
+    "sha256": "913dca9eafc8717942f0ad35b7c4827b8ee4beea863950c5cdc43f8fde191c6d"
+  },
+  {
+    "file": "37_TECHNICAL_REFERENCES.md",
+    "bytes": 2069,
+    "sha256": "7dbe93343a1d5c2e5551e53cb12f37095a9cb1218680038910e07a098740ff1f"
+  },
+  {
+    "file": "38_RETRO_INDUSTRIAL_DESIGN_SYSTEM.md",
+    "bytes": 9012,
+    "sha256": "d00451ed2ce3457572f0cede3a2601374ea5ec19d79654ea9b5ac086fd49dca6"
+  },
+  {
+    "file": "AGENTS.md",
+    "bytes": 3011,
+    "sha256": "92f36d186ce090fd149097be6c8048ea33298b339c9573af19a2e13a6d22d73c"
+  },
+  {
+    "file": "README.md",
+    "bytes": 7383,
+    "sha256": "6a63a4f173c63b586c03a2d7401d9a0c3170ee82316a5429f9827225ecb797fb"
+  }
+]
