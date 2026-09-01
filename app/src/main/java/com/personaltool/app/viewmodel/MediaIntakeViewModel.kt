@@ -1,44 +1,54 @@
 package com.personaltool.app.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.personaltool.app.media.RealHttpMediaDownloader
+import com.personaltool.app.media.RealProbeResult
 import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.model.media.DownloadStatus
 import com.personaltool.core.model.media.MediaItem
-import com.personaltool.core.model.media.MediaType
 import com.personaltool.core.storage.dao.MediaDao
 import com.personaltool.core.storage.entity.MediaEntity
-import com.personaltool.media.extractor.api.DefaultMediaExtractor
-import com.personaltool.media.extractor.api.DownloadProgress
-import com.personaltool.media.extractor.api.DownloadRequest
-import com.personaltool.media.extractor.api.MediaExtractor
-import com.personaltool.media.extractor.api.MediaProbeResult
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
-import java.util.UUID
 
 data class MediaIntakeUiState(
     val inputUrl: String = "",
     val isProbing: Boolean = false,
-    val probeResult: MediaProbeResult? = null,
+    val probeResult: RealProbeResult? = null,
     val selectedFormatId: String? = null,
     val downloadStatus: DownloadStatus = DownloadStatus.IDLE,
     val downloadProgressPercent: Int = 0,
+    val downloadedBytes: Long = 0L,
     val errorMessage: String? = null,
-    val lastDownloadedItem: MediaItem? = null
+    val activePlayingVideoPath: String? = null,
+    val activePlayingVideoTitle: String? = null
 )
 
 class MediaIntakeViewModel(
-    private val mediaDao: MediaDao,
-    private val mediaExtractor: MediaExtractor = DefaultMediaExtractor()
-) : ViewModel() {
+    application: Application,
+    private val mediaDao: MediaDao
+) : AndroidViewModel(application) {
+
+    private val downloader = RealHttpMediaDownloader(application.applicationContext)
 
     private val _uiState = MutableStateFlow(MediaIntakeUiState())
     val uiState: StateFlow<MediaIntakeUiState> = _uiState.asStateFlow()
+
+    val libraryItems: StateFlow<List<MediaItem>> = mediaDao.getAllMediaFlow()
+        .map { entities -> entities.map { it.toDomain() } }
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
 
     fun onUrlChanged(url: String) {
         _uiState.update {
@@ -55,11 +65,10 @@ class MediaIntakeViewModel(
 
         viewModelScope.launch {
             _uiState.update { it.copy(isProbing = true, errorMessage = null) }
-            when (val result = mediaExtractor.probeUrl(url)) {
+            when (val result = downloader.probeUrl(url)) {
                 is AppResult.Success -> {
                     val probe = result.data
-                    val defaultFormat = probe.availableFormats.firstOrNull { !it.isAudioOnly }?.formatId
-                        ?: probe.availableFormats.firstOrNull()?.formatId
+                    val defaultFormat = probe.availableFormats.firstOrNull()?.formatId
 
                     _uiState.update {
                         it.copy(
@@ -88,67 +97,39 @@ class MediaIntakeViewModel(
         _uiState.update { it.copy(selectedFormatId = formatId) }
     }
 
-    fun startDownload(outputDirectory: File) {
+    fun startDownload() {
         val state = _uiState.value
         val probe = state.probeResult ?: return
         val formatId = state.selectedFormatId ?: return
-
-        val downloadId = UUID.randomUUID().toString()
-        val formatOption = probe.availableFormats.find { it.formatId == formatId }
-        val isAudioOnly = formatOption?.isAudioOnly == true
-        val ext = formatOption?.ext ?: if (isAudioOnly) "m4a" else "mp4"
-
-        val targetFile = File(outputDirectory, "media-$downloadId.$ext")
+        val formatOption = probe.availableFormats.find { it.formatId == formatId } ?: return
 
         viewModelScope.launch {
             _uiState.update {
                 it.copy(
                     downloadStatus = DownloadStatus.DOWNLOADING,
                     downloadProgressPercent = 0,
+                    downloadedBytes = 0L,
                     errorMessage = null
                 )
             }
 
-            val request = DownloadRequest(
-                id = downloadId,
-                sourceUrl = probe.url,
-                formatId = formatId,
-                destinationPath = targetFile.absolutePath,
-                targetType = if (isAudioOnly) MediaType.AUDIO_ONLY else MediaType.VIDEO
-            )
-
-            when (val result = mediaExtractor.downloadMedia(request) { progress: DownloadProgress ->
-                _uiState.update { it.copy(downloadProgressPercent = progress.percent) }
+            when (val result = downloader.downloadUrl(probe, formatOption) { percent, bytes ->
+                _uiState.update {
+                    it.copy(
+                        downloadProgressPercent = percent,
+                        downloadedBytes = bytes
+                    )
+                }
             }) {
                 is AppResult.Success -> {
-                    val downloaded = result.data
-                    val mediaItem = MediaItem(
-                        id = downloaded.downloadId,
-                        sourceUrl = probe.url,
-                        title = probe.title,
-                        uploader = probe.uploader,
-                        durationMs = downloaded.durationMs,
-                        localFilePath = downloaded.outputFilePath,
-                        thumbnailPath = probe.thumbnailUrl,
-                        mediaType = if (isAudioOnly) MediaType.AUDIO_ONLY else MediaType.VIDEO,
-                        sourcePlatform = probe.sourcePlatform,
-                        formatSelected = formatId,
-                        resolution = formatOption?.resolution,
-                        fileSizeBytes = downloaded.fileSizeBytes,
-                        downloadStatus = DownloadStatus.COMPLETED,
-                        downloadProgressPercent = 100,
-                        hasTranscript = false,
-                        isFavorite = false
-                    )
-
-                    // Commit to Room DB
-                    mediaDao.insertMedia(MediaEntity.fromDomain(mediaItem))
+                    val completed = result.data
+                    mediaDao.insertMedia(MediaEntity.fromDomain(completed))
 
                     _uiState.update {
                         it.copy(
                             downloadStatus = DownloadStatus.COMPLETED,
                             downloadProgressPercent = 100,
-                            lastDownloadedItem = mediaItem
+                            inputUrl = ""
                         )
                     }
                 }
@@ -162,6 +143,31 @@ class MediaIntakeViewModel(
                 }
                 AppResult.Loading -> {}
             }
+        }
+    }
+
+    fun openVideoViewer(item: MediaItem) {
+        val path = item.localFilePath ?: return
+        _uiState.update {
+            it.copy(
+                activePlayingVideoPath = path,
+                activePlayingVideoTitle = item.title
+            )
+        }
+    }
+
+    fun closeVideoViewer() {
+        _uiState.update {
+            it.copy(
+                activePlayingVideoPath = null,
+                activePlayingVideoTitle = null
+            )
+        }
+    }
+
+    fun deleteMediaItem(id: String) {
+        viewModelScope.launch {
+            mediaDao.deleteMediaById(id)
         }
     }
 }

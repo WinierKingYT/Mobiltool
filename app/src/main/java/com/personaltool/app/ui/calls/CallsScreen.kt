@@ -15,8 +15,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.StarBorder
@@ -32,16 +33,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.personaltool.app.viewmodel.CallsViewModel
-import com.personaltool.core.designsystem.components.BadgeSeverity
 import com.personaltool.core.designsystem.components.CopperDivider
+import com.personaltool.core.designsystem.components.GlowLed
 import com.personaltool.core.designsystem.components.InstrumentButton
 import com.personaltool.core.designsystem.components.InstrumentButtonStyle
+import com.personaltool.core.designsystem.components.LedColor
 import com.personaltool.core.designsystem.components.MetricReadout
 import com.personaltool.core.designsystem.components.RecordingQualityBadge
-import com.personaltool.core.designsystem.components.StatusBadge
 import com.personaltool.core.designsystem.components.TechnicalPlate
+import com.personaltool.core.designsystem.components.WaveformVisualizer
 import com.personaltool.core.designsystem.theme.IndustrialTheme
-import com.personaltool.core.model.call.CallSession
 import com.personaltool.core.model.call.RecordingQuality
 
 @Composable
@@ -54,59 +55,76 @@ fun CallsScreen(
     val typography = IndustrialTheme.typography
 
     val callsList by viewModel.calls.collectAsState()
-    val activeState by viewModel.activeCaptureState.collectAsState()
+    val recordingState by viewModel.recordingState.collectAsState()
+    val playerState by viewModel.playerState.collectAsState()
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
-        // Active Capture Control Banner (Zero-cost when idle)
-        if (activeState != null) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(colors.accentStrong.copy(alpha = 0.25f))
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    StatusBadge(text = "RECORDING // ACTIVE", severity = BadgeSeverity.DANGER)
+        // Live Audio Recorder Cockpit Banner
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(if (recordingState.isRecording) colors.danger.copy(alpha = 0.25f) else colors.surfaceSecondary)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                GlowLed(
+                    color = if (recordingState.isRecording) LedColor.RED else LedColor.GREEN,
+                    isPulsing = recordingState.isRecording,
+                    label = if (recordingState.isRecording) "REC // ${recordingState.durationSeconds}s" else "RECORDER IDLE"
+                )
+                if (recordingState.isRecording) {
                     Spacer(modifier = Modifier.width(10.dp))
                     Text(
-                        text = "CALL IN PROGRESS",
+                        text = "AMP: ${recordingState.currentMaxAmplitude}",
                         style = typography.monoSmall,
-                        color = colors.textPrimary
+                        color = colors.accent
                     )
                 }
+            }
 
+            if (recordingState.isRecording) {
                 InstrumentButton(
-                    onClick = { viewModel.stopRecording("+90 532 999 8877", "Active Call Partner") },
+                    onClick = { viewModel.stopLiveRecording() },
                     style = InstrumentButtonStyle.DANGER
                 ) {
                     Icon(
                         imageVector = Icons.Default.Stop,
-                        contentDescription = "Stop Capture",
+                        contentDescription = "Stop",
                         tint = colors.danger,
                         modifier = Modifier.padding(end = 4.dp)
                     )
-                    Text(
-                        text = "FINALIZE",
-                        style = typography.monoSmall,
-                        color = colors.textPrimary
+                    Text(text = "STOP & SAVE", style = typography.monoSmall, color = colors.textPrimary)
+                }
+            } else {
+                InstrumentButton(
+                    onClick = { viewModel.startLiveRecording() },
+                    style = InstrumentButtonStyle.PRIMARY
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = "Record",
+                        tint = colors.accent,
+                        modifier = Modifier.padding(end = 4.dp)
                     )
+                    Text(text = "MIC RECORD", style = typography.monoSmall, color = colors.textPrimary)
                 }
             }
-            CopperDivider()
         }
+
+        CopperDivider()
 
         // Technical Summary Strip
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(colors.surfaceSecondary)
-                .padding(horizontal = 16.dp, vertical = 8.dp),
+                .background(colors.surface)
+                .padding(horizontal = 16.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -117,31 +135,82 @@ fun CallsScreen(
                 isHighlighted = true
             )
             MetricReadout(
-                label = "STORAGE USED",
+                label = "VAULT STORAGE",
                 value = "${callsList.sumOf { it.fileSizeBytes } / 1024 / 1024} MB"
             )
-
-            if (activeState == null) {
-                InstrumentButton(
-                    onClick = { viewModel.startRecording("+90 532 999 8877", "New Incoming Call") },
-                    style = InstrumentButtonStyle.PRIMARY
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Add,
-                        contentDescription = "Simulate Capture",
-                        tint = colors.accent,
-                        modifier = Modifier.padding(end = 4.dp)
-                    )
-                    Text(
-                        text = "NEW CALL",
-                        style = typography.monoSmall,
-                        color = colors.textPrimary
-                    )
-                }
-            }
         }
 
         CopperDivider()
+
+        // Live Audio Player Bar (Active when audio is playing)
+        if (playerState.activeFilePath != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.surfaceSecondary)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        GlowLed(
+                            color = if (playerState.isPlaying) LedColor.COPPER else LedColor.AMBER,
+                            isPulsing = playerState.isPlaying,
+                            label = if (playerState.isPlaying) "PLAYING AUDIO" else "PAUSED"
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "${formatDuration(playerState.currentPositionMs)} / ${formatDuration(playerState.durationMs)}",
+                            style = typography.monoSmall,
+                            color = colors.textSecondary
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        InstrumentButton(
+                            onClick = {
+                                val nextSpeed = when (playerState.playbackSpeed) {
+                                    1.0f -> 1.5f
+                                    1.5f -> 2.0f
+                                    else -> 1.0f
+                                }
+                                viewModel.player.setSpeed(nextSpeed)
+                            },
+                            style = InstrumentButtonStyle.GHOST
+                        ) {
+                            Text(text = "${playerState.playbackSpeed}x", style = typography.monoSmall, color = colors.accent)
+                        }
+
+                        Spacer(modifier = Modifier.width(4.dp))
+
+                        IconButton(onClick = { viewModel.player.togglePlayPause() }) {
+                            Icon(
+                                imageVector = if (playerState.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Play/Pause",
+                                tint = colors.accent
+                            )
+                        }
+
+                        IconButton(onClick = { viewModel.player.stop() }) {
+                            Icon(imageVector = Icons.Default.Stop, contentDescription = "Stop", tint = colors.textMuted)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // Interactive Waveform Scrub Bar
+                WaveformVisualizer(
+                    progressPercent = playerState.progressPercent,
+                    onSeek = { percent -> viewModel.player.seekToPercent(percent) },
+                    height = 36.dp
+                )
+            }
+            CopperDivider()
+        }
 
         // Calls List
         if (callsList.isEmpty()) {
@@ -199,14 +268,7 @@ fun CallsScreen(
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     InstrumentButton(
-                                        onClick = {
-                                            onOpenTranscript(
-                                                call.id,
-                                                call.contactName ?: call.phoneNumber,
-                                                call.audioFilePath,
-                                                call.durationMs
-                                            )
-                                        },
+                                        onClick = { viewModel.playCall(call) },
                                         style = InstrumentButtonStyle.PRIMARY
                                     ) {
                                         Icon(

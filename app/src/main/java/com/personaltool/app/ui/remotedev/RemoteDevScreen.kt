@@ -29,11 +29,10 @@ import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -46,8 +45,10 @@ import androidx.compose.ui.unit.dp
 import com.personaltool.app.viewmodel.RemoteDevViewModel
 import com.personaltool.core.designsystem.components.BadgeSeverity
 import com.personaltool.core.designsystem.components.CopperDivider
+import com.personaltool.core.designsystem.components.GlowLed
 import com.personaltool.core.designsystem.components.InstrumentButton
 import com.personaltool.core.designsystem.components.InstrumentButtonStyle
+import com.personaltool.core.designsystem.components.LedColor
 import com.personaltool.core.designsystem.components.MetricReadout
 import com.personaltool.core.designsystem.components.StatusBadge
 import com.personaltool.core.designsystem.components.TechnicalPlate
@@ -86,22 +87,22 @@ fun RemoteDevScreen(
         ) {
             val ws = state.workstation
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .width(8.dp)
-                        .height(8.dp)
-                        .clip(shapes.xs)
-                        .background(if (ws?.isOnline == true) colors.success else colors.danger)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "${ws?.hostname ?: "Workstation"} // ${ws?.lanAddress ?: "OFFLINE"}",
-                    style = typography.monoSmall,
-                    color = colors.textPrimary
+                GlowLed(
+                    color = if (ws?.isOnline == true) LedColor.GREEN else LedColor.RED,
+                    isPulsing = ws?.isOnline == true,
+                    label = "${ws?.hostname ?: "Desktop Workstation"} // ${ws?.lanAddress ?: "192.168.1.100:8765"}"
                 )
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = { viewModel.refreshAll() }) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Refresh",
+                        tint = colors.textSecondary
+                    )
+                }
+
                 InstrumentButton(
                     onClick = onOpenRemoteDesktop,
                     style = InstrumentButtonStyle.PRIMARY
@@ -129,25 +130,12 @@ fun RemoteDevScreen(
                     )
                     Text(text = "TASK", style = typography.monoSmall, color = colors.textSecondary)
                 }
-
-                Spacer(modifier = Modifier.width(4.dp))
-
-                InstrumentButton(
-                    onClick = { viewModel.openPairingDialog() },
-                    style = InstrumentButtonStyle.GHOST
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Pair",
-                        tint = colors.textSecondary
-                    )
-                }
             }
         }
 
         CopperDivider()
 
-        // Transport & Network Profile Strip (M10)
+        // Transport & Network Profile Strip
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -179,7 +167,7 @@ fun RemoteDevScreen(
                         tint = colors.textSecondary,
                         modifier = Modifier.padding(end = 2.dp)
                     )
-                    Text(text = "FALLBACK", style = typography.monoSmall, color = colors.textSecondary)
+                    Text(text = "ROUTE", style = typography.monoSmall, color = colors.textSecondary)
                 }
             }
 
@@ -235,12 +223,12 @@ fun RemoteDevScreen(
             contentPadding = PaddingValues(vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            // Section 0: End-to-End Cryptographic Security Proof
+            // E2EE Identity Status
             item {
                 val proof = transport.e2eProof
                 TechnicalPlate(
                     categoryTag = "SECURITY // END-TO-END CRYPTOGRAPHIC IDENTITY",
-                    title = "E2EE CHANNEL VERIFIED",
+                    title = "E2EE ENCRYPTED TUNNEL",
                     subtitle = "Session Key: ${proof.sessionKeyId} • Cipher: ${proof.algorithm}",
                     isActive = false,
                     trailingContent = {
@@ -254,7 +242,7 @@ fun RemoteDevScreen(
                         ) {
                             MetricReadout(label = "PHONE FP", value = proof.deviceFingerprint)
                             MetricReadout(label = "WORKSTATION FP", value = proof.workstationFingerprint)
-                            MetricReadout(label = "TRANSPORT", value = transport.currentTransport.displayName.take(10))
+                            MetricReadout(label = "CIPHER", value = "AES-256-GCM")
                         }
                     }
                 )
@@ -263,7 +251,7 @@ fun RemoteDevScreen(
             // Section 1: Registered Projects
             item {
                 Text(
-                    text = "01 // REGISTERED PROJECTS",
+                    text = "01 // REGISTERED CODEBASE PROJECTS",
                     style = typography.monoSmall,
                     color = colors.accent,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
@@ -285,9 +273,9 @@ fun RemoteDevScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                             InstrumentButton(
                                 onClick = { viewModel.openNewTaskDialog(project.id) },
-                                style = InstrumentButtonStyle.GHOST
+                                style = InstrumentButtonStyle.PRIMARY
                             ) {
-                                Text(text = "+ TASK", style = typography.monoSmall, color = colors.accent)
+                                Text(text = "+ TASK", style = typography.monoSmall, color = colors.textPrimary)
                             }
                         }
                     },
@@ -310,7 +298,7 @@ fun RemoteDevScreen(
             item {
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "02 // AGENT SESSIONS & TOOL CONTROL",
+                    text = "02 // LIVE AGENT SESSIONS & CONSOLE STREAM",
                     style = typography.monoSmall,
                     color = colors.accent,
                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
@@ -328,7 +316,7 @@ fun RemoteDevScreen(
                 }
 
                 TechnicalPlate(
-                    categoryTag = "${session.adapterType.displayName.uppercase()} // PROJECT: ${session.projectName}",
+                    categoryTag = "${session.adapterType.displayName.uppercase()} // ${session.projectName}",
                     title = session.title,
                     subtitle = session.lastEventSummary,
                     isActive = session.status == AgentSessionStatus.RUNNING || session.status == AgentSessionStatus.WAITING_APPROVAL,
@@ -428,7 +416,7 @@ fun RemoteDevScreen(
         }
     }
 
-    // New Task Creation Modal Dialog (M8)
+    // New Task Creation Modal Dialog
     if (state.isNewTaskDialogOpen) {
         AlertDialog(
             onDismissRequest = { viewModel.closeNewTaskDialog() },

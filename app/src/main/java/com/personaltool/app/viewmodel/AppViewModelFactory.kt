@@ -13,10 +13,10 @@ class AppViewModelFactory(
         val db = application.database
         return when {
             modelClass.isAssignableFrom(CallsViewModel::class.java) -> {
-                CallsViewModel(callDao = db.callDao()) as T
+                CallsViewModel(application = application, callDao = db.callDao()) as T
             }
             modelClass.isAssignableFrom(MediaIntakeViewModel::class.java) -> {
-                MediaIntakeViewModel(mediaDao = db.mediaDao()) as T
+                MediaIntakeViewModel(application = application, mediaDao = db.mediaDao()) as T
             }
             modelClass.isAssignableFrom(LibraryViewModel::class.java) -> {
                 LibraryViewModel(callDao = db.callDao(), mediaDao = db.mediaDao()) as T

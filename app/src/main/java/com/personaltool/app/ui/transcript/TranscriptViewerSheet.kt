@@ -18,37 +18,44 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.personaltool.app.viewmodel.TranscriptViewModel
 import com.personaltool.core.designsystem.components.BadgeSeverity
 import com.personaltool.core.designsystem.components.CopperDivider
+import com.personaltool.core.designsystem.components.GlowLed
 import com.personaltool.core.designsystem.components.InstrumentButton
 import com.personaltool.core.designsystem.components.InstrumentButtonStyle
+import com.personaltool.core.designsystem.components.LedColor
 import com.personaltool.core.designsystem.components.MetricReadout
 import com.personaltool.core.designsystem.components.StatusBadge
+import com.personaltool.core.designsystem.components.WaveformVisualizer
 import com.personaltool.core.designsystem.theme.IndustrialTheme
 import com.personaltool.core.model.transcript.TranscriptSegment
 import com.personaltool.core.model.transcript.TranscriptStatus
@@ -65,6 +72,7 @@ fun TranscriptViewerSheet(
     val typography = IndustrialTheme.typography
 
     val state by viewModel.uiState.collectAsState()
+    var searchQuery by remember { mutableStateOf("") }
 
     if (state.isOpen) {
         ModalBottomSheet(
@@ -85,7 +93,7 @@ fun TranscriptViewerSheet(
             Column(
                 modifier = modifier
                     .fillMaxWidth()
-                    .fillMaxHeight(0.9f)
+                    .fillMaxHeight(0.92f)
                     .background(colors.background)
             ) {
                 // Header Bar
@@ -97,11 +105,13 @@ fun TranscriptViewerSheet(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            text = "UNIFIED TRANSCRIPTION // SYNC",
-                            style = typography.monoSmall,
-                            color = colors.accent
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            GlowLed(
+                                color = if (state.isPlaying) LedColor.COPPER else LedColor.GREEN,
+                                isPulsing = state.isPlaying,
+                                label = "SEEK-SYNC TRANSCRIPT ENGINE"
+                            )
+                        }
                         Text(
                             text = state.targetTitle,
                             style = typography.titleLarge,
@@ -120,7 +130,7 @@ fun TranscriptViewerSheet(
 
                 CopperDivider()
 
-                // Playback Control & Scrub Bar
+                // Playback Control & Waveform Visualizer
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -151,30 +161,88 @@ fun TranscriptViewerSheet(
                             }
                             Spacer(modifier = Modifier.width(12.dp))
                             MetricReadout(
-                                label = "POSITION",
+                                label = "CURRENT TIME",
                                 value = formatTime(state.currentPlaybackPositionMs)
                             )
                         }
 
                         MetricReadout(
-                            label = "TOTAL DURATION",
+                            label = "TOTAL LENGTH",
                             value = formatTime(state.totalDurationMs)
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                    // Progress Slider
-                    Slider(
-                        value = state.currentPlaybackPositionMs.toFloat(),
-                        onValueChange = { viewModel.seekToPosition(it.toLong()) },
-                        valueRange = 0f..state.totalDurationMs.coerceAtLeast(1L).toFloat(),
-                        colors = SliderDefaults.colors(
-                            thumbColor = colors.accent,
-                            activeTrackColor = colors.accent,
-                            inactiveTrackColor = colors.border
-                        )
+                    // Real Interactive Waveform Scrubber
+                    val progressRatio = if (state.totalDurationMs > 0)
+                        state.currentPlaybackPositionMs.toFloat() / state.totalDurationMs.toFloat()
+                    else 0f
+
+                    WaveformVisualizer(
+                        progressPercent = progressRatio,
+                        onSeek = { percent ->
+                            val targetMs = (percent * state.totalDurationMs).toLong()
+                            viewModel.seekToPosition(targetMs)
+                        },
+                        height = 38.dp
                     )
+                }
+
+                CopperDivider()
+
+                // Search Filter Bar
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(colors.surfaceSecondary)
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(shapes.xs)
+                            .background(colors.surface)
+                            .border(BorderStroke(1.dp, colors.border), shapes.xs)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search",
+                            tint = colors.textMuted,
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.weight(1f),
+                            textStyle = typography.monoSmall.copy(color = colors.textPrimary),
+                            cursorBrush = SolidColor(colors.accent),
+                            decorationBox = { inner ->
+                                if (searchQuery.isEmpty()) {
+                                    Text(
+                                        text = "Filter transcript text or timestamps...",
+                                        style = typography.monoSmall,
+                                        color = colors.textMuted
+                                    )
+                                }
+                                inner()
+                            }
+                        )
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { searchQuery = "" },
+                                modifier = Modifier.height(20.dp).width(20.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Clear",
+                                    tint = colors.textMuted
+                                )
+                            }
+                        }
+                    }
                 }
 
                 CopperDivider()
@@ -245,7 +313,7 @@ fun TranscriptViewerSheet(
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                StatusBadge(text = "ON-DEVICE WHISPER PROCESSING", severity = BadgeSeverity.WARNING)
+                                StatusBadge(text = "ON-DEVICE STT PROCESSING", severity = BadgeSeverity.WARNING)
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
                                     text = "${state.progressPercent}%",
@@ -254,7 +322,7 @@ fun TranscriptViewerSheet(
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Chunking & decoding local audio...",
+                                    text = "Decoding speech segments...",
                                     style = typography.bodyMedium,
                                     color = colors.textSecondary
                                 )
@@ -288,10 +356,14 @@ fun TranscriptViewerSheet(
                     }
 
                     TranscriptStatus.READY -> {
-                        val segments = state.transcript?.segments ?: emptyList()
+                        val allSegments = state.transcript?.segments ?: emptyList()
+                        val filteredSegments = if (searchQuery.isBlank()) {
+                            allSegments
+                        } else {
+                            allSegments.filter { it.text.contains(searchQuery, ignoreCase = true) }
+                        }
 
                         Column(modifier = Modifier.weight(1f)) {
-                            // Transcript Segment List
                             LazyColumn(
                                 modifier = Modifier
                                     .weight(1f)
@@ -300,7 +372,7 @@ fun TranscriptViewerSheet(
                                 contentPadding = PaddingValues(vertical = 10.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                items(segments, key = { it.id }) { segment ->
+                                items(filteredSegments, key = { it.id }) { segment ->
                                     val isActive = segment.id == state.activeSegmentId
                                     TranscriptSegmentPlate(
                                         segment = segment,
@@ -399,7 +471,6 @@ fun TranscriptSegmentPlate(
             .padding(10.dp)
     ) {
         Row(modifier = Modifier.fillMaxWidth()) {
-            // Active Signal Indicator
             if (isActive) {
                 Box(
                     modifier = Modifier

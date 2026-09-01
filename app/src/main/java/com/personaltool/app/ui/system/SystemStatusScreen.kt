@@ -14,7 +14,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Assessment
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Icon
@@ -27,9 +26,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.personaltool.app.viewmodel.SystemStatusViewModel
 import com.personaltool.core.designsystem.components.BadgeSeverity
+import com.personaltool.core.designsystem.components.CircularTelemetryGauge
 import com.personaltool.core.designsystem.components.CopperDivider
+import com.personaltool.core.designsystem.components.GlowLed
 import com.personaltool.core.designsystem.components.InstrumentButton
 import com.personaltool.core.designsystem.components.InstrumentButtonStyle
+import com.personaltool.core.designsystem.components.LedColor
 import com.personaltool.core.designsystem.components.MetricReadout
 import com.personaltool.core.designsystem.components.StatusBadge
 import com.personaltool.core.designsystem.components.TechnicalPlate
@@ -61,13 +63,13 @@ fun SystemStatusScreen(
         ) {
             Column {
                 Text(
-                    text = "SYSTEM, POWER & SECURITY // DIAGNOSTICS",
+                    text = "TELEMETRY // HARDWARE COCKPIT",
                     style = typography.monoSmall,
                     color = colors.accent
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Hardware & Invariant Health",
+                    text = "System Diagnostics & Vault",
                     style = typography.titleLarge,
                     color = colors.textPrimary
                 )
@@ -85,6 +87,33 @@ fun SystemStatusScreen(
                 )
                 Text(text = "SYNC", style = typography.monoSmall, color = colors.textSecondary)
             }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // Dual Circular Telemetry Dials (Battery & Storage)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(colors.surfaceSecondary)
+                .padding(14.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularTelemetryGauge(
+                label = if (state.powerState.isCharging) "BATTERY (CHG)" else "BATTERY",
+                valueText = "${state.powerState.batteryPercent}%",
+                percent = state.powerState.batteryPercent / 100f,
+                gaugeColor = if (state.powerState.batteryPercent > 20) colors.accent else colors.danger
+            )
+
+            val storageUsedMb = state.storage.totalBytes / 1024 / 1024
+            CircularTelemetryGauge(
+                label = "LOCAL VAULT",
+                valueText = "${storageUsedMb}MB",
+                percent = (storageUsedMb / 500f).coerceIn(0.05f, 1.0f),
+                gaugeColor = colors.success
+            )
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -109,7 +138,7 @@ fun SystemStatusScreen(
 
         // Release Qualification Audit Action Card
         TechnicalPlate(
-            categoryTag = "QUALIFICATION GATE // MILESTONE M6",
+            categoryTag = "QUALIFICATION GATE // RELEASE AUDIT",
             title = "Release Qualification & Invariant Audit",
             subtitle = if (state.qualificationReport?.isFullyQualified == true)
                 "All 12 Invariant Checkpoints Passed (100% Ready)"
@@ -176,7 +205,7 @@ fun SystemStatusScreen(
                             modifier = Modifier.padding(end = 6.dp)
                         )
                         Text(
-                            text = if (state.qualificationReport == null) "EXECUTE M6 QUALIFICATION AUDIT" else "RE-RUN QUALIFICATION AUDIT",
+                            text = if (state.qualificationReport == null) "EXECUTE QUALIFICATION AUDIT" else "RE-RUN AUDIT",
                             style = typography.monoSmall,
                             color = colors.textPrimary
                         )
@@ -235,34 +264,6 @@ fun SystemStatusScreen(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        // OEM Power Restriction Diagnostics Plate (Fix #8)
-        TechnicalPlate(
-            categoryTag = "OEM BATTERY POLICY // BACKGROUND STABILITY",
-            title = "OEM Background Task Defense",
-            subtitle = "Guards downloads and transcription from aggressive manufacturer battery killers",
-            isActive = false,
-            bottomMetadata = {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        MetricReadout(label = "OEM VENDOR", value = "Standard / Pixel AOSP")
-                        StatusBadge(text = "NO RESTRICTIONS", severity = BadgeSeverity.SUCCESS)
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "• AOSP Standard background scheduler active. Long downloads protected.",
-                        style = typography.monoSmall,
-                        color = colors.textSecondary
-                    )
-                }
-            }
-        )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
         // Security & Cryptographic Plate
         TechnicalPlate(
             categoryTag = "SECURITY // HARDWARE VAULT",
@@ -275,11 +276,11 @@ fun SystemStatusScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    MetricReadout(label = "KEY ALIAS", value = "PersonalToolMasterKey")
-                    StatusBadge(
-                        text = if (state.isVaultEncrypted) "VAULT ARMORED" else "UNENCRYPTED",
-                        severity = if (state.isVaultEncrypted) BadgeSeverity.SUCCESS else BadgeSeverity.DANGER
+                    GlowLed(
+                        color = if (state.isVaultEncrypted) LedColor.GREEN else LedColor.RED,
+                        label = if (state.isVaultEncrypted) "VAULT ARMORED" else "UNENCRYPTED"
                     )
+                    MetricReadout(label = "KEY ALIAS", value = "PersonalToolMasterKey")
                 }
             }
         )
