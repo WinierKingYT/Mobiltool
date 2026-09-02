@@ -37,7 +37,7 @@ class PairingManager(
         return false
     }
 
-    fun isDevicePaired(deviceId: String): Boolean = pairedDevices.contains(deviceId) || deviceId == "DEFAULT_PAIRED_PHONE"
+    fun isDevicePaired(deviceId: String): Boolean = pairedDevices.contains(deviceId)
 
     fun revokeDevice(deviceId: String): Boolean = pairedDevices.remove(deviceId)
 }

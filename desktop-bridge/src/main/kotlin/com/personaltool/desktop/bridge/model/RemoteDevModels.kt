@@ -36,20 +36,16 @@ data class EndToEndProof(
 )
 
 data class Workstation(
-    val id: String,
-    val hostname: String,
-    val osName: String = "Windows 11 Pro",
-    val lanAddress: String = "192.168.1.105:8765",
+    val id: String = "WS-UNLINKED",
+    val hostname: String = "Unlinked Host",
+    val osName: String = "Unknown OS",
+    val lanAddress: String = "",
     val bridgeVersion: String = "1.0.0-M10",
-    val isOnline: Boolean = true,
-    val lastHeartbeatEpochMs: Long = System.currentTimeMillis(),
+    val isOnline: Boolean = false,
+    val lastHeartbeatEpochMs: Long = 0L,
     val activeTransport: TransportMode = TransportMode.DIRECT_LAN,
     val networkProfile: NetworkProfile = NetworkProfile.WIFI_UNMETERED,
-    val e2eProof: EndToEndProof? = EndToEndProof(
-        deviceFingerprint = "fp-android-9a4f2",
-        workstationFingerprint = "fp-win11-7c8e1",
-        sessionKeyId = "k-e2ee-session-883"
-    )
+    val e2eProof: EndToEndProof? = null
 )
 
 data class RegisteredProject(

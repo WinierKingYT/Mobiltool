@@ -14,12 +14,12 @@ class DesktopStreamManager {
     fun startSession(transportMode: TransportMode = TransportMode.DIRECT_LAN): RemoteDesktopSessionState {
         _sessionState.update {
             it.copy(
-                isConnected = true,
+                isConnected = false,
                 transportMode = transportMode,
-                latencyMs = transportMode.typicalLatencyMs,
-                currentFps = it.quality.fps,
+                latencyMs = 0,
+                currentFps = 0,
                 isUacPromptActive = false,
-                lastInputFeedback = "Session established via ${transportMode.displayName} (E2EE verified)"
+                lastInputFeedback = "Remote desktop stream unlinked (LABS / STANDBY)"
             )
         }
         return _sessionState.value
@@ -41,7 +41,7 @@ class DesktopStreamManager {
         _sessionState.update {
             it.copy(
                 transportMode = mode,
-                latencyMs = mode.typicalLatencyMs
+                latencyMs = 0
             )
         }
     }
@@ -59,7 +59,7 @@ class DesktopStreamManager {
         _sessionState.update {
             it.copy(
                 quality = quality,
-                currentFps = quality.fps
+                currentFps = 0
             )
         }
     }
@@ -69,30 +69,7 @@ class DesktopStreamManager {
     }
 
     fun injectInput(event: RemoteInputEvent) {
-        val display = _sessionState.value.activeDisplay
-        val feedback = when (event) {
-            is RemoteInputEvent.Click -> {
-                val (winAbsX, winAbsY) = VirtualScreenCoordinateTransformer.transformNormalizedToWindowsAbsolute(
-                    event.normalizedX,
-                    event.normalizedY,
-                    display
-                )
-                val type = if (event.isRightClick) "Right Click" else "Left Click"
-                "Injected $type at WinAbs($winAbsX, $winAbsY)"
-            }
-            is RemoteInputEvent.Move -> {
-                val (winAbsX, winAbsY) = VirtualScreenCoordinateTransformer.transformNormalizedToWindowsAbsolute(
-                    event.normalizedX,
-                    event.normalizedY,
-                    display
-                )
-                "Pointer move to WinAbs($winAbsX, $winAbsY)"
-            }
-            is RemoteInputEvent.Scroll -> "Scroll wheel delta: ${event.deltaY}"
-            is RemoteInputEvent.KeyChord -> "Key chord: ${event.modifiers.joinToString("+")}+${event.keyName}"
-            is RemoteInputEvent.Text -> "Injected UTF-16 Unicode text: \"${event.text}\" (KEYEVENTF_UNICODE)"
-        }
-
+        val feedback = "Unlinked: Native desktop bridge daemon not connected (input injection unavailable)"
         _sessionState.update { it.copy(lastInputFeedback = feedback) }
     }
 }

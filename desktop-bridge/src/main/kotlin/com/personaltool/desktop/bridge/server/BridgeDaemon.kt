@@ -22,10 +22,10 @@ import kotlinx.coroutines.flow.StateFlow
 
 class BridgeDaemon(
     val workstation: Workstation = Workstation(
-        id = "WS-WIN11-MAIN",
-        hostname = "Main-PC",
-        lanAddress = "192.168.1.105:8765",
-        isOnline = true
+        id = "WS-STANDBY",
+        hostname = "Standby (Unlinked)",
+        lanAddress = "",
+        isOnline = false
     ),
     private val projectRegistry: ProjectRegistry = ProjectRegistry(),
     private val pairingManager: PairingManager = PairingManager(workstation.id),

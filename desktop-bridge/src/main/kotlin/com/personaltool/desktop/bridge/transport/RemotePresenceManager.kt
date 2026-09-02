@@ -14,11 +14,7 @@ data class TransportState(
     val isReachable: Boolean = false,
     val rttLatencyMs: Int = 0,
     val lastHeartbeatEpochMs: Long = 0L,
-    val e2eProof: EndToEndProof = EndToEndProof(
-        deviceFingerprint = "fp-android-9a4f2",
-        workstationFingerprint = "fp-win11-7c8e1",
-        sessionKeyId = "k-e2ee-session-883"
-    )
+    val e2eProof: EndToEndProof? = null
 )
 
 class RemotePresenceManager {
