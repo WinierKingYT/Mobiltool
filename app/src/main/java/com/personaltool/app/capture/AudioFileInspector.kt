@@ -1,6 +1,7 @@
 package com.personaltool.app.capture
 
 import android.media.MediaMetadataRetriever
+import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.RecordingQuality
 import java.io.File
 import java.io.FileInputStream
@@ -24,11 +25,15 @@ object AudioFileInspector {
     /**
      * Inspects a recorded audio file. Checks raw container magic bytes (ftyp atom for MP4/M4A),
      * minimum file size, parser validity, duration, and bitrate.
+     *
+     * Invariant: Container integrity does NOT imply bidirectional verification.
+     * Unqualified candidate paths yield MIXED_UNVERIFIED unless physically qualified.
      */
     fun inspectRecordedFile(
         filePath: String,
         defaultQuality: RecordingQuality,
-        captureTier: com.personaltool.core.model.call.CallCaptureTier = com.personaltool.core.model.call.CallCaptureTier.UNSUPPORTED_USERSPACE
+        captureTier: CallCaptureTier = CallCaptureTier.UNSUPPORTED_USERSPACE,
+        isPhysicallyQualified: Boolean = false
     ): AudioFileInspectionResult {
         val file = File(filePath)
         if (!file.exists() || !file.canRead()) {
@@ -39,7 +44,7 @@ object AudioFileInspector {
                 mimeType = null,
                 fileSizeBytes = if (file.exists()) file.length() else 0L,
                 determinedQuality = RecordingQuality.CORRUPT,
-                rejectionReason = "File does not exist or is unreadable."
+                rejectionReason = "Audio file does not exist or cannot be read: $filePath"
             )
         }
 
@@ -51,11 +56,12 @@ object AudioFileInspector {
                 bitrate = 0L,
                 mimeType = null,
                 fileSizeBytes = fileSize,
-                determinedQuality = RecordingQuality.CORRUPT,
-                rejectionReason = "File size (${fileSize}B) is below minimum threshold (${MIN_VALID_FILE_SIZE_BYTES}B)."
+                determinedQuality = RecordingQuality.SILENT,
+                rejectionReason = "Audio file size (${fileSize} bytes) is below minimum threshold (${MIN_VALID_FILE_SIZE_BYTES} bytes)."
             )
         }
 
+        // Check ISO Base Media File Format header (ftyp atom)
         if (!isValidM4AContainerHeader(file)) {
             return AudioFileInspectionResult(
                 isValid = false,
@@ -64,7 +70,7 @@ object AudioFileInspector {
                 mimeType = null,
                 fileSizeBytes = fileSize,
                 determinedQuality = RecordingQuality.CORRUPT,
-                rejectionReason = "Corrupted container: Missing standard MP4/M4A ftyp header signature."
+                rejectionReason = "Audio file does not contain valid MP4/M4A ftyp container atom."
             )
         }
 
@@ -102,11 +108,15 @@ object AudioFileInspector {
                     )
                 }
                 else -> {
-                    // Quality Invariant: Only genuine PRIVILEGED_DIRECT and OEM_IMPORT yield VERIFIED_BIDIRECTIONAL
+                    // Critical Invariant: Valid container != VERIFIED_BIDIRECTIONAL
                     val safeQuality = when {
-                        captureTier == com.personaltool.core.model.call.CallCaptureTier.PRIVILEGED_DIRECT ||
-                                captureTier == com.personaltool.core.model.call.CallCaptureTier.OEM_IMPORT -> {
+                        isPhysicallyQualified && (captureTier == CallCaptureTier.PRIVILEGED_DIRECT ||
+                                captureTier == CallCaptureTier.OEM_IMPORT) -> {
                             RecordingQuality.VERIFIED_BIDIRECTIONAL
+                        }
+                        captureTier == CallCaptureTier.PRIVILEGED_DIRECT ||
+                                captureTier == CallCaptureTier.OEM_IMPORT -> {
+                            RecordingQuality.MIXED_UNVERIFIED
                         }
                         defaultQuality == RecordingQuality.VERIFIED_BIDIRECTIONAL -> {
                             RecordingQuality.MIXED_UNVERIFIED

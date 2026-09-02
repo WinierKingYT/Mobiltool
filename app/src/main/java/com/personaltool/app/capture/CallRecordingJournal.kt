@@ -98,11 +98,9 @@ object CallRecordingJournal {
         if (audioFile.exists() && audioFile.length() >= AudioFileInspector.MIN_VALID_FILE_SIZE_BYTES) {
             val inspection = AudioFileInspector.inspectRecordedFile(
                 filePath = audioFile.absolutePath,
-                defaultQuality = if (entry.captureTier == CallCaptureTier.PRIVILEGED_DIRECT || entry.captureTier == CallCaptureTier.OEM_IMPORT) {
-                    RecordingQuality.VERIFIED_BIDIRECTIONAL
-                } else {
-                    RecordingQuality.MIXED_UNVERIFIED
-                }
+                defaultQuality = RecordingQuality.MIXED_UNVERIFIED,
+                captureTier = entry.captureTier,
+                isPhysicallyQualified = false
             )
 
             val recoveredSession = CallSession(

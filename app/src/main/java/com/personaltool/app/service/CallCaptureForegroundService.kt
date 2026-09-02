@@ -6,7 +6,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -15,6 +14,8 @@ import com.personaltool.app.PersonalToolApplication
 import com.personaltool.app.capture.AudioFileInspector
 import com.personaltool.app.capture.CallCaptureCapabilityDetector
 import com.personaltool.app.capture.CallRecordingJournal
+import com.personaltool.app.capture.OemImportResult
+import com.personaltool.app.capture.OemRecordingImporter
 import com.personaltool.app.capture.PrivilegedCompanionClient
 import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
@@ -29,13 +30,14 @@ import java.util.UUID
 
 class CallCaptureForegroundService : Service() {
 
-    private var recorder: MediaRecorder? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var currentOutputFile: File? = null
     private var startTimeMs: Long = 0L
     private var activePhoneNumber: String = "UNKNOWN"
     private var activeDirection: CallDirection = CallDirection.INCOMING
     private var isRecordingActive = false
+    private var activeTier: CallCaptureTier = CallCaptureTier.UNSUPPORTED_USERSPACE
+    private var activeCallId: String = ""
 
     companion object {
         const val ACTION_START_CALL_CAPTURE = "com.personaltool.action.START_CALL_CAPTURE"
@@ -50,9 +52,6 @@ class CallCaptureForegroundService : Service() {
         super.onCreate()
         createNotificationChannel()
     }
-
-    private var activeTier: CallCaptureTier = CallCaptureTier.UNSUPPORTED_USERSPACE
-    private var activeCallId: String = ""
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -110,19 +109,20 @@ class CallCaptureForegroundService : Service() {
 
     private fun startForegroundWithNotification() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Mobiltool // Active Call Capture")
-            .setContentText("Status for $activePhoneNumber")
+            .setContentTitle("Mobiltool // Active Call Session")
+            .setContentText("Monitoring status for $activePhoneNumber")
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-            )
+            val fgsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            } else {
+                0
+            }
+            startForeground(NOTIFICATION_ID, notification, fgsType)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -181,8 +181,9 @@ class CallCaptureForegroundService : Service() {
                 if (file != null && file.exists()) {
                     val inspection = AudioFileInspector.inspectRecordedFile(
                         filePath = file.absolutePath,
-                        defaultQuality = RecordingQuality.VERIFIED_BIDIRECTIONAL,
-                        captureTier = CallCaptureTier.PRIVILEGED_DIRECT
+                        defaultQuality = RecordingQuality.MIXED_UNVERIFIED,
+                        captureTier = CallCaptureTier.PRIVILEGED_DIRECT,
+                        isPhysicallyQualified = false
                     )
 
                     if (inspection.isValid) {
@@ -209,7 +210,8 @@ class CallCaptureForegroundService : Service() {
             }
             CallCaptureTier.OEM_IMPORT -> {
                 releaseWakeLock()
-                val importResult = com.personaltool.app.capture.OemRecordingImporter.findAndImport(
+                val importResult = OemRecordingImporter.findAndImport(
+                    context = this,
                     phoneNumber = activePhoneNumber,
                     startTimeMs = startTimeMs,
                     endTimeMs = endTimeMs,
@@ -217,12 +219,13 @@ class CallCaptureForegroundService : Service() {
                 )
 
                 when (importResult) {
-                    is com.personaltool.app.capture.OemImportResult.Success -> {
+                    is OemImportResult.Success -> {
                         val file = importResult.importedFile
                         val inspection = AudioFileInspector.inspectRecordedFile(
                             filePath = file.absolutePath,
-                            defaultQuality = RecordingQuality.VERIFIED_BIDIRECTIONAL,
-                            captureTier = CallCaptureTier.OEM_IMPORT
+                            defaultQuality = RecordingQuality.MIXED_UNVERIFIED,
+                            captureTier = CallCaptureTier.OEM_IMPORT,
+                            isPhysicallyQualified = false
                         )
 
                         val session = CallSession(
@@ -232,7 +235,7 @@ class CallCaptureForegroundService : Service() {
                             startTimeEpochMs = startTimeMs,
                             endTimeEpochMs = endTimeMs,
                             durationMs = if (inspection.isValid) inspection.durationMs else (endTimeMs - startTimeMs).coerceAtLeast(0L),
-                            recordingQuality = if (inspection.isValid) inspection.determinedQuality else RecordingQuality.VERIFIED_BIDIRECTIONAL,
+                            recordingQuality = if (inspection.isValid) inspection.determinedQuality else RecordingQuality.MIXED_UNVERIFIED,
                             captureTier = CallCaptureTier.OEM_IMPORT,
                             audioFilePath = file.absolutePath,
                             fileSizeBytes = importResult.fileSize
@@ -241,7 +244,7 @@ class CallCaptureForegroundService : Service() {
                             dao?.insertCall(CallEntity.fromDomain(session))
                         }
                     }
-                    is com.personaltool.app.capture.OemImportResult.NotFound -> {
+                    is OemImportResult.NotFound -> {
                         val unrecordedSession = CallSession(
                             id = activeCallId,
                             phoneNumber = activePhoneNumber,
@@ -252,6 +255,22 @@ class CallCaptureForegroundService : Service() {
                             recordingQuality = RecordingQuality.UNSUPPORTED,
                             captureTier = CallCaptureTier.OEM_IMPORT,
                             unrecordedReason = "OEM Ingestion: ${importResult.diagnosticReason}"
+                        )
+                        CoroutineScope(Dispatchers.IO).launch {
+                            dao?.insertCall(CallEntity.fromDomain(unrecordedSession))
+                        }
+                    }
+                    is OemImportResult.AmbiguousCollision -> {
+                        val unrecordedSession = CallSession(
+                            id = activeCallId,
+                            phoneNumber = activePhoneNumber,
+                            direction = activeDirection,
+                            startTimeEpochMs = startTimeMs,
+                            endTimeEpochMs = endTimeMs,
+                            durationMs = 0L,
+                            recordingQuality = RecordingQuality.UNSUPPORTED,
+                            captureTier = CallCaptureTier.OEM_IMPORT,
+                            unrecordedReason = "OEM Collision Safety: ${importResult.diagnosticReason}"
                         )
                         CoroutineScope(Dispatchers.IO).launch {
                             dao?.insertCall(CallEntity.fromDomain(unrecordedSession))

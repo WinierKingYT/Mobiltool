@@ -7,9 +7,12 @@
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Modern Scoped Storage for OEM recording discovery -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
     <application
         android:name=".PersonalToolApplication"
@@ -39,16 +42,17 @@
             </intent-filter>
         </activity>
 
-        <!-- P1: Automatic Call Capture Foreground Service -->
+        <!-- P1: Automatic Call Capture Foreground Service (DataSync / Session Coordinator) -->
         <service
             android:name=".service.CallCaptureForegroundService"
             android:exported="false"
-            android:foregroundServiceType="microphone" />
+            android:foregroundServiceType="dataSync" />
 
-        <!-- P1: Telephony Call State BroadcastReceiver -->
+        <!-- P1: Telephony Call State BroadcastReceiver (Protected by READ_PHONE_STATE) -->
         <receiver
             android:name=".receiver.CallStateReceiver"
-            android:exported="true">
+            android:exported="true"
+            android:permission="android.permission.READ_PHONE_STATE">
             <intent-filter>
                 <action android:name="android.intent.action.PHONE_STATE" />
                 <action android:name="android.intent.action.NEW_OUTGOING_CALL" />
