@@ -1,8 +1,15 @@
 package com.personaltool.core.model.call
 
 enum class CallCaptureTier(val displayName: String) {
-    TIER_1_STANDARD_USERSPACE("Standard User-Space (Loudspeaker/InCall)"),
-    TIER_2_SYSTEM_COMPANION("System/Root Privileged Direct Audio")
+    PRIVILEGED_DIRECT("Privileged / System Direct Audio (Tier 2)"),
+    OEM_IMPORT("OEM Native Recording Ingestion"),
+    STANDALONE_MEMO("Standalone Microphone Memo"),
+    UNSUPPORTED_USERSPACE("Standard User-Space (AOSP Restricted - Tier 1)");
+
+    companion object {
+        val TIER_1_STANDARD_USERSPACE = UNSUPPORTED_USERSPACE
+        val TIER_2_SYSTEM_COMPANION = PRIVILEGED_DIRECT
+    }
 }
 
 enum class RecordingQuality {
@@ -30,15 +37,18 @@ enum class CallDirection {
 }
 
 enum class CallLifecycleState {
+    IDLE,
     DISCOVERED,
     RINGING,
+    OFFHOOK,
     ACTIVE,
     ACTIVE_UNRECORDED,
     RECORDING,
     FINALIZING,
     STORED,
     FAILED,
-    CORRUPT
+    CORRUPT,
+    UNSUPPORTED
 }
 
 data class CallSession(
@@ -50,11 +60,13 @@ data class CallSession(
     val endTimeEpochMs: Long? = null,
     val durationMs: Long = 0L,
     val recordingQuality: RecordingQuality = RecordingQuality.UNKNOWN,
-    val captureTier: CallCaptureTier = CallCaptureTier.TIER_1_STANDARD_USERSPACE,
+    val captureTier: CallCaptureTier = CallCaptureTier.UNSUPPORTED_USERSPACE,
     val isLoudspeakerActive: Boolean = false,
     val audioFilePath: String? = null,
     val fileSizeBytes: Long = 0L,
     val hasTranscript: Boolean = false,
     val isFavorite: Boolean = false,
+    val unrecordedReason: String? = null,
     val createdAt: Long = System.currentTimeMillis()
 )
+
