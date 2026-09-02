@@ -76,68 +76,14 @@ class DefaultMediaExtractor(
                     is AppResult.Loading -> AppResult.Loading
                 }
             }
-            MediaSource.YOUTUBE -> {
-                val videoId = contentId ?: "Unknown"
-                val formatList = listOf(
-                    MediaFormatOption(formatId = "yt-1080p", ext = "mp4", resolution = "1080p (Full HD)", note = "AVC / AAC", fileSizeBytes = 95000000L, isAudioOnly = false, videoCodec = "h264", audioCodec = "aac"),
-                    MediaFormatOption(formatId = "yt-720p", ext = "mp4", resolution = "720p (HD)", note = "AVC / AAC", fileSizeBytes = 45000000L, isAudioOnly = false, videoCodec = "h264", audioCodec = "aac"),
-                    MediaFormatOption(formatId = "yt-audio-hq", ext = "m4a", resolution = "Audio Track (HQ)", note = "AAC 256kbps", fileSizeBytes = 14000000L, isAudioOnly = true, videoCodec = null, audioCodec = "aac")
-                )
-
-                AppResult.Success(
-                    MediaProbeResult(
-                        url = validUrl,
-                        title = "YouTube Video ($videoId)",
-                        uploader = "YouTube Channel",
-                        durationMs = 0L,
-                        thumbnailUrl = "https://img.youtube.com/vi/$videoId/hqdefault.jpg",
-                        sourcePlatform = platform,
-                        availableFormats = formatList,
-                        isDrmProtected = false,
-                        requiresAuthentication = false
-                    )
-                )
-            }
-            MediaSource.INSTAGRAM -> {
-                val shortcode = contentId ?: "Reel"
-                val formatList = listOf(
-                    MediaFormatOption(formatId = "ig-orig", ext = "mp4", resolution = "Instagram Reel Video", note = "H.264 / AAC", fileSizeBytes = 32000000L, isAudioOnly = false, videoCodec = "h264", audioCodec = "aac"),
-                    MediaFormatOption(formatId = "ig-audio", ext = "m4a", resolution = "Reel Audio Track", note = "AAC 128kbps", fileSizeBytes = 4500000L, isAudioOnly = true, videoCodec = null, audioCodec = "aac")
-                )
-
-                AppResult.Success(
-                    MediaProbeResult(
-                        url = validUrl,
-                        title = "Instagram Media ($shortcode)",
-                        uploader = "Instagram User",
-                        durationMs = 0L,
-                        thumbnailUrl = null,
-                        sourcePlatform = platform,
-                        availableFormats = formatList,
-                        isDrmProtected = false,
-                        requiresAuthentication = false
-                    )
-                )
-            }
+            MediaSource.YOUTUBE,
+            MediaSource.INSTAGRAM,
             MediaSource.X_TWITTER -> {
-                val tweetId = contentId ?: "Tweet"
-                val formatList = listOf(
-                    MediaFormatOption(formatId = "x-720p", ext = "mp4", resolution = "Twitter Video (720p)", note = "H.264 / AAC", fileSizeBytes = 28000000L, isAudioOnly = false, videoCodec = "h264", audioCodec = "aac"),
-                    MediaFormatOption(formatId = "x-audio", ext = "m4a", resolution = "Twitter Audio", note = "AAC 128kbps", fileSizeBytes = 3800000L, isAudioOnly = true, videoCodec = null, audioCodec = "aac")
-                )
-
-                AppResult.Success(
-                    MediaProbeResult(
-                        url = validUrl,
-                        title = "X / Twitter Post ($tweetId)",
-                        uploader = "X Account",
-                        durationMs = 0L,
-                        thumbnailUrl = null,
-                        sourcePlatform = platform,
-                        availableFormats = formatList,
-                        isDrmProtected = false,
-                        requiresAuthentication = false
-                    )
+                // Truth Gate: Specialized platform scrapers (YouTube/IG/X) are not implemented/linked in P0.
+                // Fail closed with stable error code instead of fabricating metadata or formats.
+                AppResult.Error(
+                    message = "PLATFORM_EXTRACTION_UNAVAILABLE: Dedicated extractor for ${platform.name} is not linked in P0 baseline. Direct stream extraction only.",
+                    code = ErrorCode.EXTRACTION_FAILED
                 )
             }
         }

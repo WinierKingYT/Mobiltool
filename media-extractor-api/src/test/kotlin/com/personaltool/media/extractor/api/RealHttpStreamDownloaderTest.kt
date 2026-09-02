@@ -48,34 +48,39 @@ class RealHttpStreamDownloaderTest {
     }
 
     @Test
-    fun extractor_probeYouTubeUrl_returnsPlatformMetadata() = runTest {
+    fun extractor_probeYouTubeUrl_failsClosedWithPlatformExtractionUnavailable() = runTest {
+        // Recognized URL != Supported Extraction
+        val validation = UrlClassifier.validateAndNormalize("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        assertThat(validation).isInstanceOf(UrlValidationResult.Valid::class.java)
+        assertThat((validation as UrlValidationResult.Valid).platform).isEqualTo(MediaSource.YOUTUBE)
+
         val result = extractor.probeUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
-
-        assertThat(result).isInstanceOf(AppResult.Success::class.java)
-        val probe = (result as AppResult.Success).data
-        assertThat(probe.sourcePlatform).isEqualTo(MediaSource.YOUTUBE)
-        assertThat(probe.title).contains("dQw4w9WgXcQ")
-        assertThat(probe.availableFormats).isNotEmpty()
-        assertThat(probe.thumbnailUrl).contains("dQw4w9WgXcQ")
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.message).contains("PLATFORM_EXTRACTION_UNAVAILABLE")
     }
 
     @Test
-    fun extractor_probeInstagramUrl_returnsInstagramFormats() = runTest {
+    fun extractor_probeInstagramUrl_failsClosedWithPlatformExtractionUnavailable() = runTest {
+        val validation = UrlClassifier.validateAndNormalize("https://www.instagram.com/reel/C1234567890/")
+        assertThat(validation).isInstanceOf(UrlValidationResult.Valid::class.java)
+        assertThat((validation as UrlValidationResult.Valid).platform).isEqualTo(MediaSource.INSTAGRAM)
+
         val result = extractor.probeUrl("https://www.instagram.com/reel/C1234567890/")
-
-        assertThat(result).isInstanceOf(AppResult.Success::class.java)
-        val probe = (result as AppResult.Success).data
-        assertThat(probe.sourcePlatform).isEqualTo(MediaSource.INSTAGRAM)
-        assertThat(probe.availableFormats).isNotEmpty()
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.message).contains("PLATFORM_EXTRACTION_UNAVAILABLE")
     }
 
     @Test
-    fun extractor_probeXTwitterUrl_returnsTwitterFormats() = runTest {
-        val result = extractor.probeUrl("https://x.com/tech_user/status/987654321")
+    fun extractor_probeXTwitterUrl_failsClosedWithPlatformExtractionUnavailable() = runTest {
+        val validation = UrlClassifier.validateAndNormalize("https://x.com/tech_user/status/987654321")
+        assertThat(validation).isInstanceOf(UrlValidationResult.Valid::class.java)
+        assertThat((validation as UrlValidationResult.Valid).platform).isEqualTo(MediaSource.X_TWITTER)
 
-        assertThat(result).isInstanceOf(AppResult.Success::class.java)
-        val probe = (result as AppResult.Success).data
-        assertThat(probe.sourcePlatform).isEqualTo(MediaSource.X_TWITTER)
-        assertThat(probe.availableFormats).isNotEmpty()
+        val result = extractor.probeUrl("https://x.com/tech_user/status/987654321")
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.message).contains("PLATFORM_EXTRACTION_UNAVAILABLE")
     }
 }
