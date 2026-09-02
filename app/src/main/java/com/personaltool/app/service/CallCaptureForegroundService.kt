@@ -14,6 +14,8 @@ import androidx.core.app.NotificationCompat
 import com.personaltool.app.PersonalToolApplication
 import com.personaltool.app.capture.AudioFileInspector
 import com.personaltool.app.capture.CallCaptureCapabilityDetector
+import com.personaltool.app.capture.CallRecordingJournal
+import com.personaltool.app.capture.PrivilegedCompanionClient
 import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
 import com.personaltool.core.model.call.CallSession
@@ -49,6 +51,9 @@ class CallCaptureForegroundService : Service() {
         createNotificationChannel()
     }
 
+    private var activeTier: CallCaptureTier = CallCaptureTier.UNSUPPORTED_USERSPACE
+    private var activeCallId: String = ""
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_CALL_CAPTURE -> {
@@ -56,18 +61,21 @@ class CallCaptureForegroundService : Service() {
                     activePhoneNumber = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown Caller"
                     val isIncoming = intent.getBooleanExtra(EXTRA_IS_INCOMING, true)
                     activeDirection = if (isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING
-                    
+                    activeCallId = UUID.randomUUID().toString()
+                    startTimeMs = System.currentTimeMillis()
+
                     val capability = CallCaptureCapabilityDetector.detectCapability(this)
+                    activeTier = capability.tier
+
                     if (capability.tier == CallCaptureTier.UNSUPPORTED_USERSPACE || !capability.isTwoWaySupported) {
-                        // Hard Capability Gate (P1-E03): Standard AOSP userspace is physically blocked.
-                        // Fail closed: Register unrecorded call session and stop service without recording ambient mic.
+                        // Hard Capability Gate: Fail closed. Record unrecorded metadata session.
                         startForegroundWithNotification()
                         val app = applicationContext as? PersonalToolApplication
                         val dao = app?.database?.callDao()
                         if (dao != null) {
                             val now = System.currentTimeMillis()
                             val unrecordedSession = CallSession(
-                                id = UUID.randomUUID().toString(),
+                                id = activeCallId,
                                 phoneNumber = activePhoneNumber,
                                 direction = activeDirection,
                                 startTimeEpochMs = now,
@@ -85,13 +93,13 @@ class CallCaptureForegroundService : Service() {
                         stopSelf()
                     } else {
                         startForegroundWithNotification()
-                        startRecordingSession()
+                        startActiveCapture(capability.tier)
                     }
                 }
             }
             ACTION_STOP_CALL_CAPTURE -> {
                 if (isRecordingActive) {
-                    stopRecordingSession()
+                    stopActiveCapture()
                     stopForeground(STOP_FOREGROUND_REMOVE)
                     stopSelf()
                 }
@@ -120,88 +128,141 @@ class CallCaptureForegroundService : Service() {
         }
     }
 
-    @Suppress("DEPRECATION")
-    private fun startRecordingSession() {
+    private fun startActiveCapture(tier: CallCaptureTier) {
         acquireWakeLock()
+        isRecordingActive = true
         val dir = File(filesDir, "calls").apply { mkdirs() }
-        val callId = UUID.randomUUID().toString()
-        val file = File(dir, "call_${callId}_${System.currentTimeMillis()}.m4a")
+        val file = File(dir, "call_${activeCallId}_${startTimeMs}.m4a")
         currentOutputFile = file
-        startTimeMs = System.currentTimeMillis()
 
-        runCatching {
-            val mediaRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                MediaRecorder(this)
-            } else {
-                MediaRecorder()
-            }
+        // Crash-safety journal registration
+        CallRecordingJournal.recordStart(
+            context = this,
+            entry = com.personaltool.app.capture.InFlightCallJournalEntry(
+                callId = activeCallId,
+                phoneNumber = activePhoneNumber,
+                direction = activeDirection,
+                captureTier = tier,
+                startTimeEpochMs = startTimeMs,
+                tempAudioPath = file.absolutePath
+            )
+        )
 
-            mediaRecorder.apply {
-                setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
-                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                setAudioSamplingRate(44100)
-                setAudioEncodingBitRate(128000)
-                setOutputFile(file.absolutePath)
-                prepare()
-                start()
+        when (tier) {
+            CallCaptureTier.PRIVILEGED_DIRECT -> {
+                PrivilegedCompanionClient.startCapture(
+                    callId = activeCallId,
+                    phoneNumber = activePhoneNumber,
+                    outputFile = file
+                ) { /* Completion handled in stopActiveCapture */ }
             }
-            recorder = mediaRecorder
-            isRecordingActive = true
-        }.onFailure {
-            isRecordingActive = false
-            releaseWakeLock()
+            CallCaptureTier.OEM_IMPORT -> {
+                // OEM recorder runs natively in dialer; importer will harvest file upon call conclusion
+            }
+            else -> {
+                // No action
+            }
         }
     }
 
-    private fun stopRecordingSession() {
+    private fun stopActiveCapture() {
         isRecordingActive = false
-        val file = currentOutputFile
         val endTimeMs = System.currentTimeMillis()
+        val dir = File(filesDir, "calls").apply { mkdirs() }
+        val app = applicationContext as? PersonalToolApplication
+        val dao = app?.database?.callDao()
 
-        try {
-            recorder?.apply {
-                stop()
-                reset()
-                release()
+        when (activeTier) {
+            CallCaptureTier.PRIVILEGED_DIRECT -> {
+                PrivilegedCompanionClient.stopCapture()
+                releaseWakeLock()
+
+                val file = currentOutputFile
+                if (file != null && file.exists()) {
+                    val inspection = AudioFileInspector.inspectRecordedFile(
+                        filePath = file.absolutePath,
+                        defaultQuality = RecordingQuality.VERIFIED_BIDIRECTIONAL,
+                        captureTier = CallCaptureTier.PRIVILEGED_DIRECT
+                    )
+
+                    if (inspection.isValid) {
+                        val session = CallSession(
+                            id = activeCallId,
+                            phoneNumber = activePhoneNumber,
+                            direction = activeDirection,
+                            startTimeEpochMs = startTimeMs,
+                            endTimeEpochMs = endTimeMs,
+                            durationMs = inspection.durationMs,
+                            recordingQuality = inspection.determinedQuality,
+                            captureTier = CallCaptureTier.PRIVILEGED_DIRECT,
+                            audioFilePath = file.absolutePath,
+                            fileSizeBytes = inspection.fileSizeBytes
+                        )
+                        CoroutineScope(Dispatchers.IO).launch {
+                            dao?.insertCall(CallEntity.fromDomain(session))
+                        }
+                    } else {
+                        file.delete()
+                    }
+                }
+                CallRecordingJournal.recordEnd(this)
             }
-        } catch (_: Exception) {
-            // Safe teardown
-        } finally {
-            recorder = null
-            releaseWakeLock()
-        }
-
-        if (file != null && file.exists()) {
-            val capability = CallCaptureCapabilityDetector.detectCapability(this)
-            val inspection = AudioFileInspector.inspectRecordedFile(file.absolutePath, capability.expectedQuality)
-
-            if (inspection.isValid) {
-                val app = applicationContext as? PersonalToolApplication
-                val dao = app?.database?.callDao()
-
-                val session = CallSession(
-                    id = UUID.randomUUID().toString(),
+            CallCaptureTier.OEM_IMPORT -> {
+                releaseWakeLock()
+                val importResult = com.personaltool.app.capture.OemRecordingImporter.findAndImport(
                     phoneNumber = activePhoneNumber,
-                    contactName = null,
-                    direction = activeDirection,
-                    startTimeEpochMs = startTimeMs,
-                    endTimeEpochMs = endTimeMs,
-                    durationMs = inspection.durationMs,
-                    recordingQuality = inspection.determinedQuality,
-                    captureTier = capability.tier,
-                    isLoudspeakerActive = capability.isLoudspeakerOn,
-                    audioFilePath = file.absolutePath,
-                    fileSizeBytes = inspection.fileSizeBytes,
-                    hasTranscript = false,
-                    isFavorite = false
+                    startTimeMs = startTimeMs,
+                    endTimeMs = endTimeMs,
+                    targetVaultDir = dir
                 )
 
-                CoroutineScope(Dispatchers.IO).launch {
-                    dao?.insertCall(CallEntity.fromDomain(session))
+                when (importResult) {
+                    is com.personaltool.app.capture.OemImportResult.Success -> {
+                        val file = importResult.importedFile
+                        val inspection = AudioFileInspector.inspectRecordedFile(
+                            filePath = file.absolutePath,
+                            defaultQuality = RecordingQuality.VERIFIED_BIDIRECTIONAL,
+                            captureTier = CallCaptureTier.OEM_IMPORT
+                        )
+
+                        val session = CallSession(
+                            id = activeCallId,
+                            phoneNumber = activePhoneNumber,
+                            direction = activeDirection,
+                            startTimeEpochMs = startTimeMs,
+                            endTimeEpochMs = endTimeMs,
+                            durationMs = if (inspection.isValid) inspection.durationMs else (endTimeMs - startTimeMs).coerceAtLeast(0L),
+                            recordingQuality = if (inspection.isValid) inspection.determinedQuality else RecordingQuality.VERIFIED_BIDIRECTIONAL,
+                            captureTier = CallCaptureTier.OEM_IMPORT,
+                            audioFilePath = file.absolutePath,
+                            fileSizeBytes = importResult.fileSize
+                        )
+                        CoroutineScope(Dispatchers.IO).launch {
+                            dao?.insertCall(CallEntity.fromDomain(session))
+                        }
+                    }
+                    is com.personaltool.app.capture.OemImportResult.NotFound -> {
+                        val unrecordedSession = CallSession(
+                            id = activeCallId,
+                            phoneNumber = activePhoneNumber,
+                            direction = activeDirection,
+                            startTimeEpochMs = startTimeMs,
+                            endTimeEpochMs = endTimeMs,
+                            durationMs = 0L,
+                            recordingQuality = RecordingQuality.UNSUPPORTED,
+                            captureTier = CallCaptureTier.OEM_IMPORT,
+                            unrecordedReason = "OEM Ingestion: ${importResult.diagnosticReason}"
+                        )
+                        CoroutineScope(Dispatchers.IO).launch {
+                            dao?.insertCall(CallEntity.fromDomain(unrecordedSession))
+                        }
+                    }
                 }
-            } else {
-                file.delete()
+                CallRecordingJournal.recordEnd(this)
+            }
+            else -> {
+                releaseWakeLock()
+                CallRecordingJournal.recordEnd(this)
             }
         }
     }
@@ -240,7 +301,7 @@ class CallCaptureForegroundService : Service() {
 
     override fun onDestroy() {
         if (isRecordingActive) {
-            stopRecordingSession()
+            stopActiveCapture()
         }
         super.onDestroy()
     }

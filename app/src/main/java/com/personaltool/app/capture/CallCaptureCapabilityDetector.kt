@@ -23,25 +23,48 @@ object CallCaptureCapabilityDetector {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val isSpeakerOn = audioManager?.isSpeakerphoneOn == true
 
-        // Hard Capability Gate (P1-E03):
-        // Standard AOSP Userspace cannot capture bidirectional downlink stream.
-        // Privileged Direct Companion or OEM Import must be verified through legitimate IPC/storage.
-        val tier = CallCaptureTier.UNSUPPORTED_USERSPACE
-        val isTwoWaySupported = false
+        val isCompanionActive = PrivilegedCompanionClient.isCompanionActive()
+        val isOemDirectoryPresent = OemRecordingImporter.isOemRecordingDirectoryPresent()
 
-        val limitationReason = when {
-            Build.VERSION.SDK_INT >= 29 -> "Android 10+ SELinux & AudioPolicy restriction: Direct voice call downlink is blocked in userspace. System companion or OEM import required."
-            else -> "AOSP Userspace: Standard microphone captures uplink audio only. Bidirectional hardware tap unavailable."
+        val tier = when {
+            isCompanionActive -> CallCaptureTier.PRIVILEGED_DIRECT
+            isOemDirectoryPresent -> CallCaptureTier.OEM_IMPORT
+            else -> CallCaptureTier.UNSUPPORTED_USERSPACE
+        }
+
+        val isTwoWaySupported = tier == CallCaptureTier.PRIVILEGED_DIRECT || tier == CallCaptureTier.OEM_IMPORT
+
+        val audioSourceType = when (tier) {
+            CallCaptureTier.PRIVILEGED_DIRECT -> "UNIX_SOCKET_ALSA_STREAM"
+            CallCaptureTier.OEM_IMPORT -> "OEM_MEDIASTORE_INGESTION"
+            else -> "NONE_UNSUPPORTED"
+        }
+
+        val expectedQuality = when (tier) {
+            CallCaptureTier.PRIVILEGED_DIRECT, CallCaptureTier.OEM_IMPORT -> RecordingQuality.VERIFIED_BIDIRECTIONAL
+            else -> RecordingQuality.UNSUPPORTED
+        }
+
+        val limitationReason = when (tier) {
+            CallCaptureTier.PRIVILEGED_DIRECT -> "Privileged companion daemon active: Capturing hardware-level ALSA dual streams."
+            CallCaptureTier.OEM_IMPORT -> "OEM call recording active: Ingesting manufacturer dual-channel recording."
+            else -> {
+                if (Build.VERSION.SDK_INT >= 29) {
+                    "Android 10+ SELinux & AudioPolicy restriction: Direct voice call downlink is blocked in userspace. System companion or OEM import required."
+                } else {
+                    "AOSP Userspace: Standard microphone captures uplink audio only. Bidirectional hardware tap unavailable."
+                }
+            }
         }
 
         return DetailedCaptureCapability(
             tier = tier,
-            isTwoWaySupported = false,
-            audioSourceType = "NONE_UNSUPPORTED",
+            isTwoWaySupported = isTwoWaySupported,
+            audioSourceType = audioSourceType,
             chipArchitecture = "${Build.MANUFACTURER} ${Build.MODEL} (API ${Build.VERSION.SDK_INT})",
-            rootCompanionDetected = false,
+            rootCompanionDetected = isCompanionActive,
             isLoudspeakerOn = isSpeakerOn,
-            expectedQuality = RecordingQuality.UNSUPPORTED,
+            expectedQuality = expectedQuality,
             physicalLimitationReason = limitationReason
         )
     }

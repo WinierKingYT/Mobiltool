@@ -25,7 +25,11 @@ object AudioFileInspector {
      * Inspects a recorded audio file. Checks raw container magic bytes (ftyp atom for MP4/M4A),
      * minimum file size, parser validity, duration, and bitrate.
      */
-    fun inspectRecordedFile(filePath: String, defaultQuality: RecordingQuality): AudioFileInspectionResult {
+    fun inspectRecordedFile(
+        filePath: String,
+        defaultQuality: RecordingQuality,
+        captureTier: com.personaltool.core.model.call.CallCaptureTier = com.personaltool.core.model.call.CallCaptureTier.UNSUPPORTED_USERSPACE
+    ): AudioFileInspectionResult {
         val file = File(filePath)
         if (!file.exists() || !file.canRead()) {
             return AudioFileInspectionResult(
@@ -98,11 +102,16 @@ object AudioFileInspector {
                     )
                 }
                 else -> {
-                    // Invariant Guardrail: Audio container validity must never promote userspace recording to VERIFIED_BIDIRECTIONAL
-                    val safeQuality = if (defaultQuality == RecordingQuality.VERIFIED_BIDIRECTIONAL) {
-                        RecordingQuality.MIXED_UNVERIFIED
-                    } else {
-                        defaultQuality
+                    // Quality Invariant: Only genuine PRIVILEGED_DIRECT and OEM_IMPORT yield VERIFIED_BIDIRECTIONAL
+                    val safeQuality = when {
+                        captureTier == com.personaltool.core.model.call.CallCaptureTier.PRIVILEGED_DIRECT ||
+                                captureTier == com.personaltool.core.model.call.CallCaptureTier.OEM_IMPORT -> {
+                            RecordingQuality.VERIFIED_BIDIRECTIONAL
+                        }
+                        defaultQuality == RecordingQuality.VERIFIED_BIDIRECTIONAL -> {
+                            RecordingQuality.MIXED_UNVERIFIED
+                        }
+                        else -> defaultQuality
                     }
                     AudioFileInspectionResult(
                         isValid = true,

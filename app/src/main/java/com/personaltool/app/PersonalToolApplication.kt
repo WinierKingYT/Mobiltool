@@ -26,9 +26,10 @@ class PersonalToolApplication : Application() {
     override fun onCreate() {
         super.onCreate()
 
-        // Asynchronous Staging Cleanup at startup (Invariant: no orphaned temp files)
+        // Asynchronous Staging Cleanup & Call Crash Safety Recovery at startup
         CoroutineScope(Dispatchers.IO).launch {
             StagingCleaner.cleanStagingDirectory(stagingDirectory)
+            com.personaltool.app.capture.CallRecordingJournal.recoverPendingSessions(this@PersonalToolApplication)
         }
     }
 }

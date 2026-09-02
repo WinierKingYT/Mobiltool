@@ -64,4 +64,16 @@ class AudioFileInspectorTest {
         val isHeaderValid = AudioFileInspector.isValidM4AContainerHeader(validM4a)
         assertThat(isHeaderValid).isTrue()
     }
+
+    @Test
+    fun unreadableFile_failsGracefully() {
+        val badPath = "C:\\invalid\\path\\that\\does\\not\\exist\\call.m4a"
+        val result = AudioFileInspector.inspectRecordedFile(
+            filePath = badPath,
+            defaultQuality = RecordingQuality.VERIFIED_BIDIRECTIONAL,
+            captureTier = com.personaltool.core.model.call.CallCaptureTier.PRIVILEGED_DIRECT
+        )
+        assertThat(result.isValid).isFalse()
+        assertThat(result.determinedQuality).isEqualTo(RecordingQuality.CORRUPT)
+    }
 }
