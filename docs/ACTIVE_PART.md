@@ -2,7 +2,7 @@
 
 ```text
 ACTIVE_PART = P1
-STATUS = IN_PROGRESS
+STATUS = AWAITING_PHYSICAL_QUALIFICATION
 ```
 
 Scope (P1 - Call Recording):
