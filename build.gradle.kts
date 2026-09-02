@@ -19,6 +19,13 @@ subprojects {
         }
     }
     tasks.withType<Test>().configureEach {
-        jvmArgs("-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8")
+        jvmArgs("-Dfile.encoding=UTF-8", "-Dsun.jnu.encoding=UTF-8", "-Duser.language=en", "-Duser.country=US")
+        val shortRoot = rootDir.absolutePath.replace("aramakayıt", "ARAMAK~1")
+        if (shortRoot != rootDir.absolutePath) {
+            doFirst {
+                testClassesDirs = files(testClassesDirs.files.map { File(it.absolutePath.replace("aramakayıt", "ARAMAK~1")) })
+                classpath = files(classpath.files.map { File(it.absolutePath.replace("aramakayıt", "ARAMAK~1")) })
+            }
+        }
     }
 }
