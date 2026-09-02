@@ -14,8 +14,10 @@ import androidx.core.app.NotificationCompat
 import com.personaltool.app.PersonalToolApplication
 import com.personaltool.app.capture.AudioFileInspector
 import com.personaltool.app.capture.CallCaptureCapabilityDetector
+import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
 import com.personaltool.core.model.call.CallSession
+import com.personaltool.core.model.call.RecordingQuality
 import com.personaltool.core.storage.entity.CallEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -54,8 +56,37 @@ class CallCaptureForegroundService : Service() {
                     activePhoneNumber = intent.getStringExtra(EXTRA_PHONE_NUMBER) ?: "Unknown Caller"
                     val isIncoming = intent.getBooleanExtra(EXTRA_IS_INCOMING, true)
                     activeDirection = if (isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING
-                    startForegroundWithNotification()
-                    startRecordingSession()
+                    
+                    val capability = CallCaptureCapabilityDetector.detectCapability(this)
+                    if (capability.tier == CallCaptureTier.UNSUPPORTED_USERSPACE || !capability.isTwoWaySupported) {
+                        // Hard Capability Gate (P1-E03): Standard AOSP userspace is physically blocked.
+                        // Fail closed: Register unrecorded call session and stop service without recording ambient mic.
+                        startForegroundWithNotification()
+                        val app = applicationContext as? PersonalToolApplication
+                        val dao = app?.database?.callDao()
+                        if (dao != null) {
+                            val now = System.currentTimeMillis()
+                            val unrecordedSession = CallSession(
+                                id = UUID.randomUUID().toString(),
+                                phoneNumber = activePhoneNumber,
+                                direction = activeDirection,
+                                startTimeEpochMs = now,
+                                endTimeEpochMs = now,
+                                durationMs = 0L,
+                                recordingQuality = RecordingQuality.UNSUPPORTED,
+                                captureTier = CallCaptureTier.UNSUPPORTED_USERSPACE,
+                                unrecordedReason = capability.physicalLimitationReason
+                            )
+                            CoroutineScope(Dispatchers.IO).launch {
+                                dao.insertCall(CallEntity.fromDomain(unrecordedSession))
+                            }
+                        }
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    } else {
+                        startForegroundWithNotification()
+                        startRecordingSession()
+                    }
                 }
             }
             ACTION_STOP_CALL_CAPTURE -> {
@@ -72,7 +103,7 @@ class CallCaptureForegroundService : Service() {
     private fun startForegroundWithNotification() {
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Mobiltool // Active Call Capture")
-            .setContentText("Recording in progress for $activePhoneNumber")
+            .setContentText("Status for $activePhoneNumber")
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -105,10 +136,8 @@ class CallCaptureForegroundService : Service() {
                 MediaRecorder()
             }
 
-            val audioSource = MediaRecorder.AudioSource.VOICE_COMMUNICATION
-
             mediaRecorder.apply {
-                setAudioSource(audioSource)
+                setAudioSource(MediaRecorder.AudioSource.VOICE_COMMUNICATION)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
                 setAudioSamplingRate(44100)
@@ -120,29 +149,8 @@ class CallCaptureForegroundService : Service() {
             recorder = mediaRecorder
             isRecordingActive = true
         }.onFailure {
-            // Fallback to standard MIC source if VOICE_COMMUNICATION is rejected
-            runCatching {
-                val fallbackRecorder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    MediaRecorder(this)
-                } else {
-                    MediaRecorder()
-                }
-                fallbackRecorder.apply {
-                    setAudioSource(MediaRecorder.AudioSource.MIC)
-                    setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
-                    setAudioEncoder(MediaRecorder.AudioEncoder.AAC)
-                    setAudioSamplingRate(44100)
-                    setAudioEncodingBitRate(128000)
-                    setOutputFile(file.absolutePath)
-                    prepare()
-                    start()
-                }
-                recorder = fallbackRecorder
-                isRecordingActive = true
-            }.onFailure {
-                isRecordingActive = false
-                releaseWakeLock()
-            }
+            isRecordingActive = false
+            releaseWakeLock()
         }
     }
 

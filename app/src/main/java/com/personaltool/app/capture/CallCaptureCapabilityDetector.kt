@@ -23,32 +23,25 @@ object CallCaptureCapabilityDetector {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val isSpeakerOn = audioManager?.isSpeakerphoneOn == true
 
-        // Truth Gate: Generic root presence (/sbin/su) does NOT imply a functional Mobiltool system companion.
-        // Privileged companion daemon protocol is unlinked in P0 baseline; fail-closed.
-        val tier = CallCaptureTier.TIER_1_STANDARD_USERSPACE
+        // Hard Capability Gate (P1-E03):
+        // Standard AOSP Userspace cannot capture bidirectional downlink stream.
+        // Privileged Direct Companion or OEM Import must be verified through legitimate IPC/storage.
+        val tier = CallCaptureTier.UNSUPPORTED_USERSPACE
         val isTwoWaySupported = false
 
-        // Standard microphone and VOICE_COMMUNICATION capture uplink/ambient only; never VERIFIED_BIDIRECTIONAL.
-        val expectedQuality = if (isSpeakerOn) {
-            RecordingQuality.MIXED_UNVERIFIED
-        } else {
-            RecordingQuality.ONE_SIDED
-        }
-
         val limitationReason = when {
-            isSpeakerOn -> "Loudspeaker active: Remote audio captured acoustically via microphone (unverified acoustic mix)."
-            Build.VERSION.SDK_INT >= 29 -> "Android 10+ SELinux restriction: Direct voice call downlink is blocked in userspace. Ambient mic only."
-            else -> "AOSP Userspace: Standard microphone captures uplink audio and ambient sound only."
+            Build.VERSION.SDK_INT >= 29 -> "Android 10+ SELinux & AudioPolicy restriction: Direct voice call downlink is blocked in userspace. System companion or OEM import required."
+            else -> "AOSP Userspace: Standard microphone captures uplink audio only. Bidirectional hardware tap unavailable."
         }
 
         return DetailedCaptureCapability(
             tier = tier,
             isTwoWaySupported = false,
-            audioSourceType = "VOICE_COMMUNICATION_MIC",
+            audioSourceType = "NONE_UNSUPPORTED",
             chipArchitecture = "${Build.MANUFACTURER} ${Build.MODEL} (API ${Build.VERSION.SDK_INT})",
             rootCompanionDetected = false,
             isLoudspeakerOn = isSpeakerOn,
-            expectedQuality = expectedQuality,
+            expectedQuality = RecordingQuality.UNSUPPORTED,
             physicalLimitationReason = limitationReason
         )
     }
