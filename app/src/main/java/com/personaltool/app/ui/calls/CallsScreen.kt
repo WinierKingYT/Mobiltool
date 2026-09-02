@@ -1,5 +1,6 @@
 package com.personaltool.app.ui.calls
 
+import android.app.Activity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -33,9 +34,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import com.personaltool.app.capture.OemDiscoveryState
 import com.personaltool.app.capture.OemPermissionManager
+import com.personaltool.app.capture.OemPermissionState
 import com.personaltool.app.viewmodel.CallsViewModel
 import com.personaltool.core.designsystem.components.CopperDivider
 import com.personaltool.core.designsystem.components.GlowLed
@@ -58,6 +62,8 @@ fun CallsScreen(
 ) {
     val colors = IndustrialTheme.colors
     val typography = IndustrialTheme.typography
+    val context = LocalContext.current
+    val activity = context as? Activity
 
     val callsList by viewModel.calls.collectAsState()
     val recordingState by viewModel.recordingState.collectAsState()
@@ -68,7 +74,13 @@ fun CallsScreen(
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        viewModel.onPermissionResult(isGranted)
+        val shouldShowRationale = if (activity != null) {
+            ActivityCompat.shouldShowRequestPermissionRationale(
+                activity,
+                OemPermissionManager.getRequiredPermission()
+            )
+        } else true
+        viewModel.onPermissionResult(isGranted, shouldShowRationale)
     }
 
     Column(
@@ -109,8 +121,37 @@ fun CallsScreen(
 
         CopperDivider()
 
-        // Explicit OEM Permission Request Preflight Banner
-        if (capability.oemDiscoveryState == OemDiscoveryState.OEM_MEDIA_PERMISSION_REQUIRED) {
+        // Explicit OEM Permission Request & Settings Navigation Preflight Banner
+        if (permissionState == OemPermissionState.PERMANENTLY_DENIED) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.danger.copy(alpha = 0.18f))
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        text = "OEM RECORDING ACCESS // PERMISSION BLOCKED",
+                        style = typography.monoSmall,
+                        color = colors.danger
+                    )
+                    Text(
+                        text = "Permission blocked — enable Audio access in Android Settings to ingest OEM dialer recordings.",
+                        style = typography.bodyMedium,
+                        color = colors.textSecondary
+                    )
+                }
+                InstrumentButton(
+                    onClick = { viewModel.openAppSettings(context) },
+                    style = InstrumentButtonStyle.DANGER
+                ) {
+                    Text(text = "OPEN SETTINGS", style = typography.monoSmall, color = colors.textPrimary)
+                }
+            }
+            CopperDivider()
+        } else if (capability.oemDiscoveryState == OemDiscoveryState.OEM_MEDIA_PERMISSION_REQUIRED || permissionState == OemPermissionState.DENIED) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -133,6 +174,7 @@ fun CallsScreen(
                 }
                 InstrumentButton(
                     onClick = {
+                        OemPermissionManager.markPermissionRequested(context)
                         permissionLauncher.launch(OemPermissionManager.getRequiredPermission())
                     },
                     style = InstrumentButtonStyle.PRIMARY

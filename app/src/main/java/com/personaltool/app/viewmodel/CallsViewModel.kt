@@ -1,6 +1,7 @@
 package com.personaltool.app.viewmodel
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.personaltool.app.audio.AmbientMicRecorder
@@ -54,16 +55,25 @@ class CallsViewModel(
     val recordingState = recorder.state
     val playerState = player.state
 
-    fun refreshCapability() {
+    fun refreshCapability(shouldShowRationale: Boolean = true) {
         val context = getApplication<Application>().applicationContext
-        _permissionState.value = OemPermissionManager.getPermissionState(context)
+        _permissionState.value = OemPermissionManager.getPermissionState(context, shouldShowRationale)
         _hardwareCapability.value = CallCaptureCapabilityDetector.detectCapability(context)
     }
 
-    fun onPermissionResult(isGranted: Boolean) {
+    fun onPermissionResult(isGranted: Boolean, shouldShowRationale: Boolean) {
         val context = getApplication<Application>().applicationContext
-        _permissionState.value = if (isGranted) OemPermissionState.GRANTED else OemPermissionState.DENIED
+        OemPermissionManager.markPermissionRequested(context)
+        _permissionState.value = OemPermissionManager.evaluatePermissionState(
+            hasPermission = isGranted,
+            hasRequestedBefore = true,
+            shouldShowRationale = shouldShowRationale
+        )
         _hardwareCapability.value = CallCaptureCapabilityDetector.detectCapability(context)
+    }
+
+    fun openAppSettings(context: Context) {
+        context.startActivity(OemPermissionManager.createAppSettingsIntent(context))
     }
 
     fun startLiveRecording() {

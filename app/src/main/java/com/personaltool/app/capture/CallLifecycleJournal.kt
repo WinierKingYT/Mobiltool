@@ -1,6 +1,9 @@
 package com.personaltool.app.capture
 
 import android.content.Context
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.personaltool.app.PersonalToolApplication
 import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
@@ -67,6 +70,7 @@ data class ActiveCallLifecycleEntry(
 
 object CallLifecycleJournal {
 
+    const val STALE_CALL_THRESHOLD_MS = 14400000L // 4 hours threshold for truly abandoned sessions
     private const val JOURNAL_FILE_NAME = "call_lifecycle_journal.txt"
 
     private fun getJournalFile(context: Context): File {
@@ -113,11 +117,14 @@ object CallLifecycleJournal {
     }
 
     /**
-     * Reconciles abandoned call sessions upon application startup or process recreation.
-     * Invariant: For OEM_IMPORT, a missing Mobiltool temp file is normal and must NEVER yield CORRUPT.
+     * Reconciles persisted call journals upon application startup or process recreation.
+     * Truthful Reconciliation Invariants:
+     * 1. OFFHOOK_ACTIVE is NOT prematurely converted to UNSUPPORTED/deleted unless age >= STALE_CALL_THRESHOLD_MS.
+     * 2. ENDED_IMPORT_PENDING idempotently re-enqueues the WorkManager import worker.
+     * 3. Truly stale sessions (>= 4h) are logged as truthful UNSUPPORTED metadata records without fabricating audio.
      */
     @Synchronized
-    fun reconcileAbandonedSessions(context: Context) {
+    fun reconcileOnStartup(context: Context) {
         val file = getJournalFile(context)
         if (!file.exists()) return
 
@@ -127,32 +134,64 @@ object CallLifecycleJournal {
             return
         }
 
-        val app = context.applicationContext as? PersonalToolApplication
-        val dao = app?.database?.callDao()
-        val now = System.currentTimeMillis()
-        val startTime = entry.callStartTimeMs
-        val endTime = entry.callEndTimeMs ?: now
-        val durationMs = (endTime - startTime).coerceAtLeast(0L)
-        val direction = if (entry.isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING
+        when (entry.lifecycleState) {
+            PersistedCallState.OFFHOOK_ACTIVE -> {
+                val ageMs = System.currentTimeMillis() - entry.callStartTimeMs
+                if (ageMs < STALE_CALL_THRESHOLD_MS) {
+                    // Call may still be in-progress on the telephony line! Keep journal for subsequent IDLE broadcast.
+                    return
+                }
 
-        val session = CallSession(
-            id = entry.callId,
-            phoneNumber = entry.phoneNumber,
-            direction = direction,
-            startTimeEpochMs = startTime,
-            endTimeEpochMs = endTime,
-            durationMs = durationMs,
-            recordingQuality = RecordingQuality.UNSUPPORTED,
-            captureTier = entry.capturePathCandidate,
-            unrecordedReason = "Call session interrupted by device or process restart before completion."
-        )
+                // Truly stale abandoned call (e.g. device rebooted hours ago)
+                val app = context.applicationContext as? PersonalToolApplication
+                val dao = app?.database?.callDao()
+                val session = CallSession(
+                    id = entry.callId,
+                    phoneNumber = entry.phoneNumber,
+                    direction = if (entry.isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING,
+                    startTimeEpochMs = entry.callStartTimeMs,
+                    endTimeEpochMs = entry.callStartTimeMs + STALE_CALL_THRESHOLD_MS,
+                    durationMs = STALE_CALL_THRESHOLD_MS,
+                    recordingQuality = RecordingQuality.UNSUPPORTED,
+                    captureTier = entry.capturePathCandidate,
+                    unrecordedReason = "Call session timed out after 4 hours without receiving telephony termination event."
+                )
 
-        if (dao != null) {
-            CoroutineScope(Dispatchers.IO).launch {
-                dao.insertCall(CallEntity.fromDomain(session))
+                if (dao != null) {
+                    CoroutineScope(Dispatchers.IO).launch {
+                        dao.insertCall(CallEntity.fromDomain(session))
+                    }
+                }
+                file.delete()
+            }
+
+            PersistedCallState.ENDED_IMPORT_PENDING -> {
+                // Re-ensure WorkManager import task is scheduled
+                if (entry.capturePathCandidate == CallCaptureTier.OEM_IMPORT) {
+                    val workRequest = OneTimeWorkRequestBuilder<OemPostCallImportWorker>()
+                        .setInputData(
+                            OemPostCallImportWorker.createInputData(
+                                callId = entry.callId,
+                                phoneNumber = entry.phoneNumber,
+                                isIncoming = entry.isIncoming,
+                                startTimeMs = entry.callStartTimeMs,
+                                endTimeMs = entry.callEndTimeMs ?: System.currentTimeMillis(),
+                                candidateTier = entry.capturePathCandidate
+                            )
+                        )
+                        .build()
+
+                    WorkManager.getInstance(context).enqueueUniqueWork(
+                        "oem_import_${entry.callId}",
+                        ExistingWorkPolicy.KEEP,
+                        workRequest
+                    )
+                }
+            }
+
+            PersistedCallState.COMPLETED -> {
+                file.delete()
             }
         }
-
-        file.delete()
     }
 }

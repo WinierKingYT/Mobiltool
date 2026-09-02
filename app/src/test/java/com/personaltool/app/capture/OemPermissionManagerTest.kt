@@ -18,4 +18,46 @@ class OemPermissionManagerTest {
         assertThat(permission).isNotNull()
         assertThat(permission.startsWith("android.permission.")).isTrue()
     }
+
+    @Test
+    fun evaluatePermissionState_whenGranted_returnsGranted() {
+        val state = OemPermissionManager.evaluatePermissionState(
+            hasPermission = true,
+            hasRequestedBefore = false,
+            shouldShowRationale = false
+        )
+        assertThat(state).isEqualTo(OemPermissionState.GRANTED)
+    }
+
+    @Test
+    fun evaluatePermissionState_whenDeniedFirstTime_returnsDenied() {
+        val state = OemPermissionManager.evaluatePermissionState(
+            hasPermission = false,
+            hasRequestedBefore = false,
+            shouldShowRationale = true
+        )
+        assertThat(state).isEqualTo(OemPermissionState.DENIED)
+    }
+
+    @Test
+    fun evaluatePermissionState_whenDeniedWithRationale_returnsDenied() {
+        val state = OemPermissionManager.evaluatePermissionState(
+            hasPermission = false,
+            hasRequestedBefore = true,
+            shouldShowRationale = true
+        )
+        assertThat(state).isEqualTo(OemPermissionState.DENIED)
+    }
+
+    @Test
+    fun evaluatePermissionState_whenDeniedWithoutRationaleAfterPreviousRequest_returnsPermanentlyDenied() {
+        // User clicked "Don't ask again" or OS blocked further dialogs:
+        // hasPermission = false, hasRequestedBefore = true, shouldShowRationale = false
+        val state = OemPermissionManager.evaluatePermissionState(
+            hasPermission = false,
+            hasRequestedBefore = true,
+            shouldShowRationale = false
+        )
+        assertThat(state).isEqualTo(OemPermissionState.PERMANENTLY_DENIED)
+    }
 }
