@@ -23,17 +23,14 @@ class RemoteDevClient(
 ) {
 
     suspend fun getWorkstation(): AppResult<Workstation> {
-        delay(50)
         return AppResult.Success(bridgeDaemon.getWorkstationSummary())
     }
 
     suspend fun getProjects(): AppResult<List<RegisteredProject>> {
-        delay(50)
         return AppResult.Success(bridgeDaemon.getRegisteredProjects())
     }
 
     suspend fun getAgentSessions(): AppResult<List<AgentSession>> {
-        delay(50)
         return AppResult.Success(bridgeDaemon.getAgentSessions())
     }
 
@@ -52,7 +49,6 @@ class RemoteDevClient(
     }
 
     suspend fun pairWithCode(pairingCode: String, deviceId: String): AppResult<Boolean> {
-        delay(100)
         val success = bridgeDaemon.pairClient(pairingCode, deviceId)
         return if (success) {
             AppResult.Success(true)
@@ -66,7 +62,6 @@ class RemoteDevClient(
         adapterType: AgentAdapterType,
         prompt: String
     ): AppResult<AgentSession> {
-        delay(100)
         val session = bridgeDaemon.startTask(projectId, adapterType, prompt)
         return if (session != null) {
             AppResult.Success(session)
@@ -76,19 +71,16 @@ class RemoteDevClient(
     }
 
     suspend fun sendPrompt(sessionId: String, prompt: String): AppResult<Unit> {
-        delay(50)
         val success = bridgeDaemon.sendPrompt(sessionId, prompt)
         return if (success) AppResult.Success(Unit) else AppResult.Error("Session not found")
     }
 
     suspend fun cancelSession(sessionId: String): AppResult<Unit> {
-        delay(50)
         val success = bridgeDaemon.cancelSession(sessionId)
         return if (success) AppResult.Success(Unit) else AppResult.Error("Session not found")
     }
 
     suspend fun respondApproval(approvalId: String, isApproved: Boolean): AppResult<Unit> {
-        delay(50)
         val success = bridgeDaemon.respondApproval(approvalId, isApproved)
         return if (success) AppResult.Success(Unit) else AppResult.Error("Approval request not found or expired")
     }
