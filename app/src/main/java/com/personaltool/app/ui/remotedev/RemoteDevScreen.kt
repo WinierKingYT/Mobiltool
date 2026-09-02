@@ -230,13 +230,17 @@ fun RemoteDevScreen(
             // E2EE Identity Status
             item {
                 val proof = transport.e2eProof
+                val isE2eeActive = proof != null
                 TechnicalPlate(
                     categoryTag = "SECURITY // END-TO-END CRYPTOGRAPHIC IDENTITY",
-                    title = "E2EE ENCRYPTED TUNNEL",
-                    subtitle = "Session Key: ${proof.sessionKeyId} • Cipher: ${proof.algorithm}",
+                    title = if (isE2eeActive) "E2EE ENCRYPTED TUNNEL" else "E2EE IDENTITY UNLINKED",
+                    subtitle = if (proof != null) "Session Key: ${proof.sessionKeyId} • Cipher: ${proof.algorithm}" else "No active pairing session • Cryptographic tunnel in standby",
                     isActive = false,
                     trailingContent = {
-                        StatusBadge(text = "E2EE ACTIVE", severity = BadgeSeverity.SUCCESS)
+                        StatusBadge(
+                            text = if (isE2eeActive) "E2EE ACTIVE" else "UNVERIFIED",
+                            severity = if (isE2eeActive) BadgeSeverity.SUCCESS else BadgeSeverity.MUTED
+                        )
                     },
                     bottomMetadata = {
                         Row(
@@ -244,9 +248,9 @@ fun RemoteDevScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            MetricReadout(label = "PHONE FP", value = proof.deviceFingerprint)
-                            MetricReadout(label = "WORKSTATION FP", value = proof.workstationFingerprint)
-                            MetricReadout(label = "CIPHER", value = "AES-256-GCM")
+                            MetricReadout(label = "PHONE FP", value = proof?.deviceFingerprint ?: "--")
+                            MetricReadout(label = "WORKSTATION FP", value = proof?.workstationFingerprint ?: "--")
+                            MetricReadout(label = "CIPHER", value = proof?.algorithm ?: "STANDBY")
                         }
                     }
                 )

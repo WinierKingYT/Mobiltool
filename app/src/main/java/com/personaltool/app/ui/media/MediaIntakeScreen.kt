@@ -110,7 +110,7 @@ fun MediaIntakeScreen(
             GlowLed(
                 color = if (state.downloadStatus == DownloadStatus.DOWNLOADING) LedColor.AMBER else LedColor.GREEN,
                 isPulsing = state.downloadStatus == DownloadStatus.DOWNLOADING,
-                label = if (state.downloadStatus == DownloadStatus.DOWNLOADING) "DOWNLOADING" else "ENGINE READY"
+                label = if (state.downloadStatus == DownloadStatus.DOWNLOADING) "DOWNLOADING" else "IDLE"
             )
         }
 

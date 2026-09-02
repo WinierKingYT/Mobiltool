@@ -43,11 +43,11 @@ import com.personaltool.core.designsystem.components.TechnicalTopBar
 import com.personaltool.core.designsystem.theme.IndustrialTheme
 
 enum class MainNavigationTab(val index: String, val title: String, val systemTag: String) {
-    CALLS("01", "CALL ARCHIVE", "CAPTURE // STANDBY"),
-    MEDIA("02", "MEDIA INTAKE", "EXTRACTOR // READY"),
+    CALLS("01", "CALL ARCHIVE", "CAPTURE // UNVERIFIED"),
+    MEDIA("02", "MEDIA INTAKE", "EXTRACTOR // LIMITED"),
     LIBRARY("03", "UNIFIED VAULT", "STORAGE // LOCAL"),
-    SYSTEM("04", "SYSTEM & POWER", "HARDWARE // OPTIMAL"),
-    REMOTE_DEV("05", "REMOTE DEV", "BRIDGE // PAIRED")
+    SYSTEM("04", "SYSTEM & POWER", "STATUS // LOCAL"),
+    REMOTE_DEV("05", "REMOTE DEV", "LABS // UNAVAILABLE")
 }
 
 @Composable
