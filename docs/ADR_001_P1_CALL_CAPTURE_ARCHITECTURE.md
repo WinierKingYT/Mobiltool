@@ -29,7 +29,7 @@ graph TD
     B -->|Standard Unprivileged Userspace| E[Path 3: UNSUPPORTED Fail-Closed]
     
     C --> F[Dual-Stream PCM/AAC via UNIX Domain Socket]
-    D --> G[MediaStore.Audio Post-Call Ingestion & Correlation]
+    D --> G[WorkManager OemPostCallImportWorker & MediaStore Ingestion]
     E --> H[Metadata-Only Session: UNSUPPORTED Diagnostic]
     
     F --> I[Audio File Inspector & Quality Validation]
@@ -54,7 +54,7 @@ graph TD
 - **Storage & Ingestion Pipeline**:
   - Modern Scoped Storage compliance via `MediaStore.Audio.Media.EXTERNAL_CONTENT_URI` with runtime `READ_MEDIA_AUDIO` (Android 13+) / `READ_EXTERNAL_STORAGE` (Android $\le$ 12).
   - Explicit avoidance of `MANAGE_EXTERNAL_STORAGE` (no "All Files Access" required).
-  - Strict multi-factor correlation engine (Timestamp window $[T_{start}-15s \dots T_{end}+25s]$ + Call Duration Matching + Anti-Collision Phone Matching).
+  - Pure correlation engine (`OemCorrelationEngine`) enforcing strict timestamp window $[T_{start}-15s \dots T_{end}+25s]$ + Call Duration Matching + Anti-Collision Phone Matching.
   - Atomic copy into Mobiltool internal vault (`filesDir/calls/`), followed by ISO MP4 container verification.
 - **Decision**: Selected as the **Primary Candidate Pathway** for physical preflight feasibility testing if the user''s device supports native call recording.
 
@@ -73,13 +73,16 @@ graph TD
 
 ---
 
-## 4. Background Execution & Android 12–15 Broadcast Durability
+## 4. Background Execution, WorkManager & Process-Death Recovery
 
 1. **Elimination of Long-Lived In-Call FGS**:
    - `OEM_IMPORT` does not record audio in userspace during the call. The OEM dialer handles recording independently.
-   - On `PHONE_STATE/OFFHOOK`: Mobiltool persists minimal active-call state in `CallRecordingJournal` without holding an FGS or wakelock.
-   - On `PHONE_STATE/IDLE`: Post-call ingestion is executed via `goAsync()` in a bounded background coroutine with OEM flush delay.
-2. **Platform Compliance**:
+   - On `PHONE_STATE/OFFHOOK`: Mobiltool persists minimal active-call state in `CallLifecycleJournal` without holding an FGS or wakelock.
+   - On `PHONE_STATE/IDLE`: Post-call ingestion is scheduled as a durable unique background task (`OemPostCallImportWorker`) via Android WorkManager with OEM flush delay.
+2. **Process-Death Recovery**:
+   - If the application process is terminated between OFFHOOK and IDLE, `CallLifecycleJournal` maintains state on disk. The IDLE receiver recovers the exact same `callId` and start time, and enqueues the worker seamlessly.
+   - Abandoned sessions on startup are reconciled as transparent metadata records without fabricating files or claiming corruption.
+3. **Platform Compliance**:
    - Fully compliant with Android 12–15 background execution limits without relying on illegal while-in-use microphone foreground service starts.
    - `CallStateReceiver` is secured with `android:permission="android.permission.READ_PHONE_STATE"`.
 

@@ -220,101 +220,50 @@ object OemRecordingImporter {
 
         val allCandidates = mediaStoreCandidates.ifEmpty { directCandidates }
 
-        if (allCandidates.isEmpty()) {
-            return OemImportResult.NotFound(
-                "No OEM recording found in MediaStore or storage within timestamp window ($windowStart..$windowEnd)."
-            )
-        }
+        return when (val decision = OemCorrelationEngine.correlate(startTimeMs, endTimeMs, phoneNumber, allCandidates)) {
+            is OemCorrelationDecision.NotFound -> OemImportResult.NotFound(decision.reason)
+            is OemCorrelationDecision.Ambiguous -> OemImportResult.AmbiguousCollision(decision.reason)
+            is OemCorrelationDecision.Match -> {
+                val matchedCandidate = decision.candidate
+                targetVaultDir.mkdirs()
+                val destFile = File(targetVaultDir, "call_oem_${UUID.randomUUID()}_${System.currentTimeMillis()}.m4a")
 
-        // 3. Multi-Factor Correlation: Duration Check
-        // If actual call was >= 3 seconds and candidate has duration metadata > 0, verify approximate match
-        val durationFilteredCandidates = if (actualCallDurationMs >= 3000L) {
-            allCandidates.filter { candidate ->
-                if (candidate.durationMs <= 0L) {
-                    true // Unknown duration metadata in candidate: keep for further filtering
-                } else {
-                    val toleranceMs = (actualCallDurationMs * 0.4).toLong().coerceAtLeast(15000L)
-                    val diffMs = kotlin.math.abs(candidate.durationMs - actualCallDurationMs)
-                    diffMs <= toleranceMs
-                }
-            }
-        } else {
-            allCandidates
-        }
-
-        if (durationFilteredCandidates.isEmpty()) {
-            return OemImportResult.NotFound(
-                "Candidate files found in window were rejected due to severe duration mismatch with actual call duration (${actualCallDurationMs}ms)."
-            )
-        }
-
-        // 4. Collision / Ambiguity Resolution (Fail Closed on ambiguity)
-        val cleanNumber = phoneNumber.filter { it.isDigit() }
-        val matchedCandidate: OemAudioCandidate = if (durationFilteredCandidates.size == 1) {
-            durationFilteredCandidates.first()
-        } else {
-            // Multiple candidates in window: require clean number match
-            if (cleanNumber.length >= 4) {
-                val numberMatches = durationFilteredCandidates.filter { candidate ->
-                    candidate.displayName.contains(cleanNumber) ||
-                            (candidate.filePath != null && candidate.filePath.contains(cleanNumber))
-                }
-                if (numberMatches.size == 1) {
-                    numberMatches.first()
-                } else if (numberMatches.size > 1) {
-                    return OemImportResult.AmbiguousCollision(
-                        "Multiple OEM recording files (${numberMatches.size}) matched phone number '$phoneNumber' in window; failed closed to prevent wrong-call data corruption."
-                    )
-                } else {
-                    return OemImportResult.AmbiguousCollision(
-                        "Multiple OEM recording files (${durationFilteredCandidates.size}) found in window but none matched phone number '$phoneNumber'; failed closed to prevent wrong-call corruption."
-                    )
-                }
-            } else {
-                return OemImportResult.AmbiguousCollision(
-                    "Multiple OEM recording files (${durationFilteredCandidates.size}) found in window for private/unknown number; failed closed to prevent wrong-call corruption."
-                )
-            }
-        }
-
-        // 5. Atomic Vault Copy
-        targetVaultDir.mkdirs()
-        val destFile = File(targetVaultDir, "call_oem_${UUID.randomUUID()}_${System.currentTimeMillis()}.m4a")
-
-        return try {
-            val copied = if (matchedCandidate.filePath != null && File(matchedCandidate.filePath).exists()) {
-                FileInputStream(File(matchedCandidate.filePath)).use { input ->
-                    FileOutputStream(destFile).use { output ->
-                        input.copyTo(output)
-                        output.flush()
+                try {
+                    val copied = if (matchedCandidate.filePath != null && File(matchedCandidate.filePath).exists()) {
+                        FileInputStream(File(matchedCandidate.filePath)).use { input ->
+                            FileOutputStream(destFile).use { output ->
+                                input.copyTo(output)
+                                output.flush()
+                            }
+                        }
+                        true
+                    } else if (matchedCandidate.uri != null) {
+                        context.contentResolver.openInputStream(matchedCandidate.uri)?.use { input ->
+                            FileOutputStream(destFile).use { output ->
+                                input.copyTo(output)
+                                output.flush()
+                            }
+                        }
+                        true
+                    } else {
+                        false
                     }
-                }
-                true
-            } else if (matchedCandidate.uri != null) {
-                context.contentResolver.openInputStream(matchedCandidate.uri)?.use { input ->
-                    FileOutputStream(destFile).use { output ->
-                        input.copyTo(output)
-                        output.flush()
-                    }
-                }
-                true
-            } else {
-                false
-            }
 
-            if (copied && destFile.exists() && destFile.length() > 2048L) {
-                OemImportResult.Success(
-                    importedFile = destFile,
-                    sourceUri = matchedCandidate.uri,
-                    fileSize = destFile.length()
-                )
-            } else {
-                destFile.delete()
-                OemImportResult.NotFound("Copied OEM file is empty or missing after stream transfer.")
+                    if (copied && destFile.exists() && destFile.length() > 2048L) {
+                        OemImportResult.Success(
+                            importedFile = destFile,
+                            sourceUri = matchedCandidate.uri,
+                            fileSize = destFile.length()
+                        )
+                    } else {
+                        destFile.delete()
+                        OemImportResult.NotFound("Copied OEM file is empty or missing after stream transfer.")
+                    }
+                } catch (err: Exception) {
+                    destFile.delete()
+                    OemImportResult.NotFound("Failed to copy OEM recording into vault: ${err.message}")
+                }
             }
-        } catch (err: Exception) {
-            destFile.delete()
-            OemImportResult.NotFound("Failed to copy OEM recording into vault: ${err.message}")
         }
     }
 

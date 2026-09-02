@@ -1,5 +1,7 @@
 package com.personaltool.app.ui.calls
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +34,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.personaltool.app.capture.OemDiscoveryState
+import com.personaltool.app.capture.OemPermissionManager
 import com.personaltool.app.viewmodel.CallsViewModel
 import com.personaltool.core.designsystem.components.CopperDivider
 import com.personaltool.core.designsystem.components.GlowLed
@@ -58,7 +62,14 @@ fun CallsScreen(
     val callsList by viewModel.calls.collectAsState()
     val recordingState by viewModel.recordingState.collectAsState()
     val playerState by viewModel.playerState.collectAsState()
-    val capability = viewModel.hardwareCapability
+    val capability by viewModel.hardwareCapability.collectAsState()
+    val permissionState by viewModel.permissionState.collectAsState()
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        viewModel.onPermissionResult(isGranted)
+    }
 
     Column(
         modifier = modifier
@@ -76,19 +87,61 @@ fun CallsScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 GlowLed(
-                    color = if (capability.tier == CallCaptureTier.TIER_2_SYSTEM_COMPANION) LedColor.GREEN else LedColor.AMBER,
+                    color = when {
+                        capability.isTwoWaySupported -> LedColor.GREEN
+                        capability.canAttemptFeasibility -> LedColor.COPPER
+                        else -> LedColor.AMBER
+                    },
                     isPulsing = false,
-                    label = if (capability.tier == CallCaptureTier.TIER_2_SYSTEM_COMPANION) "TIER 2 (ALSA COMPANION)" else "TIER 1 (AOSP RESTRICTED)"
+                    label = when (capability.tier) {
+                        CallCaptureTier.PRIVILEGED_DIRECT -> "PRIVILEGED DIRECT (UNLINKED)"
+                        CallCaptureTier.OEM_IMPORT -> "OEM IMPORT (${capability.oemDiscoveryState.name})"
+                        else -> "AOSP USERSPACE (RESTRICTED)"
+                    }
                 )
             }
             Text(
-                text = if (capability.isTwoWaySupported) "2-WAY CAPTURE READY" else "MIC CAPTURE ONLY",
+                text = if (capability.isTwoWaySupported) "2-WAY QUALIFIED" else if (capability.canAttemptFeasibility) "FEASIBILITY CANDIDATE" else "RESTRICTED",
                 style = typography.monoSmall,
                 color = if (capability.isTwoWaySupported) colors.accent else colors.textMuted
             )
         }
 
         CopperDivider()
+
+        // Explicit OEM Permission Request Preflight Banner
+        if (capability.oemDiscoveryState == OemDiscoveryState.OEM_MEDIA_PERMISSION_REQUIRED) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.warning.copy(alpha = 0.18f))
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                    Text(
+                        text = "OEM RECORDING ACCESS // PERMISSION REQUIRED",
+                        style = typography.monoSmall,
+                        color = colors.warning
+                    )
+                    Text(
+                        text = "Media audio permission required to query and ingest OEM dialer recordings.",
+                        style = typography.bodyMedium,
+                        color = colors.textSecondary
+                    )
+                }
+                InstrumentButton(
+                    onClick = {
+                        permissionLauncher.launch(OemPermissionManager.getRequiredPermission())
+                    },
+                    style = InstrumentButtonStyle.PRIMARY
+                ) {
+                    Text(text = "GRANT ACCESS", style = typography.monoSmall, color = colors.textPrimary)
+                }
+            }
+            CopperDivider()
+        }
 
         // Live Audio Recorder Cockpit Banner
         Row(

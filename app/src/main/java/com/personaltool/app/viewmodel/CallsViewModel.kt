@@ -6,14 +6,19 @@ import androidx.lifecycle.viewModelScope
 import com.personaltool.app.audio.AmbientMicRecorder
 import com.personaltool.app.audio.RealAudioPlayer
 import com.personaltool.app.capture.CallCaptureCapabilityDetector
+import com.personaltool.app.capture.DetailedCaptureCapability
+import com.personaltool.app.capture.OemPermissionManager
+import com.personaltool.app.capture.OemPermissionState
 import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
 import com.personaltool.core.model.call.CallSession
 import com.personaltool.core.model.call.RecordingQuality
 import com.personaltool.core.storage.dao.CallDao
 import com.personaltool.core.storage.entity.CallEntity
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -27,7 +32,16 @@ class CallsViewModel(
 
     val recorder = AmbientMicRecorder(application.applicationContext)
     val player = RealAudioPlayer(application.applicationContext)
-    val hardwareCapability = CallCaptureCapabilityDetector.detectCapability(application.applicationContext)
+
+    private val _hardwareCapability = MutableStateFlow(
+        CallCaptureCapabilityDetector.detectCapability(application.applicationContext)
+    )
+    val hardwareCapability: StateFlow<DetailedCaptureCapability> = _hardwareCapability.asStateFlow()
+
+    private val _permissionState = MutableStateFlow(
+        OemPermissionManager.getPermissionState(application.applicationContext)
+    )
+    val permissionState: StateFlow<OemPermissionState> = _permissionState.asStateFlow()
 
     val calls: StateFlow<List<CallSession>> = callDao.getAllCallsFlow()
         .map { entities -> entities.map { it.toDomain() } }
@@ -39,6 +53,18 @@ class CallsViewModel(
 
     val recordingState = recorder.state
     val playerState = player.state
+
+    fun refreshCapability() {
+        val context = getApplication<Application>().applicationContext
+        _permissionState.value = OemPermissionManager.getPermissionState(context)
+        _hardwareCapability.value = CallCaptureCapabilityDetector.detectCapability(context)
+    }
+
+    fun onPermissionResult(isGranted: Boolean) {
+        val context = getApplication<Application>().applicationContext
+        _permissionState.value = if (isGranted) OemPermissionState.GRANTED else OemPermissionState.DENIED
+        _hardwareCapability.value = CallCaptureCapabilityDetector.detectCapability(context)
+    }
 
     fun startLiveRecording() {
         val sessionId = UUID.randomUUID().toString()

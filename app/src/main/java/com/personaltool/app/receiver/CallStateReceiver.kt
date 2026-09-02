@@ -4,15 +4,17 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.telephony.TelephonyManager
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import com.personaltool.app.PersonalToolApplication
-import com.personaltool.app.capture.AudioFileInspector
+import com.personaltool.app.capture.ActiveCallLifecycleEntry
 import com.personaltool.app.capture.CallCaptureCapabilityDetector
-import com.personaltool.app.capture.CallRecordingJournal
+import com.personaltool.app.capture.CallLifecycleJournal
 import com.personaltool.app.capture.CallSessionTracker
 import com.personaltool.app.capture.CallTerminationEvent
-import com.personaltool.app.capture.InFlightCallJournalEntry
-import com.personaltool.app.capture.OemImportResult
-import com.personaltool.app.capture.OemRecordingImporter
+import com.personaltool.app.capture.OemPostCallImportWorker
+import com.personaltool.app.capture.PersistedCallState
 import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.CallDirection
 import com.personaltool.core.model.call.CallSession
@@ -20,14 +22,12 @@ import com.personaltool.core.model.call.RecordingQuality
 import com.personaltool.core.storage.entity.CallEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import java.io.File
 import java.util.UUID
 
 /**
  * Durable, background-safe telephony broadcast receiver.
- * Uses goAsync() for bounded completion; avoids illegal while-in-use FGS background starts.
+ * Uses CallLifecycleJournal for cross-process state continuity and schedules durable WorkManager workers on IDLE.
  */
 class CallStateReceiver : BroadcastReceiver() {
 
@@ -52,16 +52,19 @@ class CallStateReceiver : BroadcastReceiver() {
                     val callId = UUID.randomUUID().toString()
                     val startTime = snapshot.callStartTimeMs ?: System.currentTimeMillis()
 
-                    // Register minimal crash-safety journal entry without holding long-lived FGS
-                    CallRecordingJournal.recordStart(
+                    // Persist active call lifecycle entry for cross-process durability
+                    CallLifecycleJournal.recordOffhook(
                         context = context,
-                        entry = InFlightCallJournalEntry(
+                        entry = ActiveCallLifecycleEntry(
                             callId = callId,
+                            lifecycleState = PersistedCallState.OFFHOOK_ACTIVE,
                             phoneNumber = snapshot.phoneNumber ?: "Unknown",
-                            direction = if (snapshot.isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING,
-                            captureTier = capability.tier,
-                            startTimeEpochMs = startTime,
-                            tempAudioPath = File(context.filesDir, "calls/in_flight_$callId.m4a").absolutePath
+                            isIncoming = snapshot.isIncoming,
+                            ringingStartTimeMs = snapshot.ringingStartTimeMs,
+                            callStartTimeMs = startTime,
+                            callEndTimeMs = null,
+                            capturePathCandidate = capability.tier,
+                            createdAtEpochMs = System.currentTimeMillis()
                         )
                     )
                 }
@@ -90,7 +93,7 @@ class CallStateReceiver : BroadcastReceiver() {
                                     dao.insertCall(CallEntity.fromDomain(missedSession))
                                 }
                             } finally {
-                                CallRecordingJournal.recordEnd(context)
+                                CallLifecycleJournal.clear(context)
                                 pendingResult.finish()
                             }
                         }
@@ -98,12 +101,60 @@ class CallStateReceiver : BroadcastReceiver() {
 
                     is CallTerminationEvent.ActiveCallEnded -> {
                         val pendingResult = goAsync()
-                        CoroutineScope(Dispatchers.IO).launch {
-                            try {
-                                handleActiveCallEnded(context, event)
-                            } finally {
-                                CallRecordingJournal.recordEnd(context)
-                                pendingResult.finish()
+                        val capability = CallCaptureCapabilityDetector.detectCapability(context)
+                        val activeEntry = CallLifecycleJournal.recordIdle(context, event.endTimeMs)
+
+                        // Preserve identical callId from OFFHOOK journal even if process died and restarted
+                        val callId = activeEntry?.callId ?: UUID.randomUUID().toString()
+                        val startTime = activeEntry?.callStartTimeMs ?: event.startTimeMs
+                        val endTime = event.endTimeMs
+                        val isIncoming = activeEntry?.isIncoming ?: event.isIncoming
+
+                        if (capability.canAttemptFeasibility && capability.tier == CallCaptureTier.OEM_IMPORT) {
+                            // Schedule durable background WorkManager task with unique work semantics
+                            val workRequest = OneTimeWorkRequestBuilder<OemPostCallImportWorker>()
+                                .setInputData(
+                                    OemPostCallImportWorker.createInputData(
+                                        callId = callId,
+                                        phoneNumber = event.phoneNumber,
+                                        isIncoming = isIncoming,
+                                        startTimeMs = startTime,
+                                        endTimeMs = endTime,
+                                        candidateTier = CallCaptureTier.OEM_IMPORT
+                                    )
+                                )
+                                .build()
+
+                            WorkManager.getInstance(context).enqueueUniqueWork(
+                                "oem_import_$callId",
+                                ExistingWorkPolicy.REPLACE,
+                                workRequest
+                            )
+                            pendingResult.finish()
+                        } else {
+                            // Metadata-only unsupported userspace record
+                            CoroutineScope(Dispatchers.IO).launch {
+                                try {
+                                    val app = context.applicationContext as? PersonalToolApplication
+                                    val dao = app?.database?.callDao()
+                                    if (dao != null) {
+                                        val unrecordedSession = CallSession(
+                                            id = callId,
+                                            phoneNumber = event.phoneNumber,
+                                            direction = if (isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING,
+                                            startTimeEpochMs = startTime,
+                                            endTimeEpochMs = endTime,
+                                            durationMs = (endTime - startTime).coerceAtLeast(0L),
+                                            recordingQuality = RecordingQuality.UNSUPPORTED,
+                                            captureTier = capability.tier,
+                                            unrecordedReason = capability.physicalLimitationReason
+                                        )
+                                        dao.insertCall(CallEntity.fromDomain(unrecordedSession))
+                                    }
+                                } finally {
+                                    CallLifecycleJournal.clear(context)
+                                    pendingResult.finish()
+                                }
                             }
                         }
                     }
@@ -113,99 +164,6 @@ class CallStateReceiver : BroadcastReceiver() {
                     }
                 }
             }
-        }
-    }
-
-    private suspend fun handleActiveCallEnded(context: Context, event: CallTerminationEvent.ActiveCallEnded) {
-        val app = context.applicationContext as? PersonalToolApplication
-        val dao = app?.database?.callDao() ?: return
-        val capability = CallCaptureCapabilityDetector.detectCapability(context)
-        val callId = UUID.randomUUID().toString()
-        val durationMs = (event.endTimeMs - event.startTimeMs).coerceAtLeast(0L)
-        val direction = if (event.isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING
-
-        if (capability.canAttemptFeasibility && capability.tier == CallCaptureTier.OEM_IMPORT) {
-            // Allow bounded OEM flush delay (up to 1.5s)
-            delay(1500)
-
-            val vaultDir = File(context.filesDir, "calls").apply { mkdirs() }
-            val importResult = OemRecordingImporter.findAndImport(
-                context = context,
-                phoneNumber = event.phoneNumber,
-                startTimeMs = event.startTimeMs,
-                endTimeMs = event.endTimeMs,
-                targetVaultDir = vaultDir
-            )
-
-            when (importResult) {
-                is OemImportResult.Success -> {
-                    val file = importResult.importedFile
-                    val inspection = AudioFileInspector.inspectRecordedFile(
-                        filePath = file.absolutePath,
-                        defaultQuality = RecordingQuality.MIXED_UNVERIFIED,
-                        captureTier = CallCaptureTier.OEM_IMPORT,
-                        isPhysicallyQualified = capability.isBidirectionalQualified
-                    )
-
-                    val session = CallSession(
-                        id = callId,
-                        phoneNumber = event.phoneNumber,
-                        direction = direction,
-                        startTimeEpochMs = event.startTimeMs,
-                        endTimeEpochMs = event.endTimeMs,
-                        durationMs = if (inspection.isValid) inspection.durationMs else durationMs,
-                        recordingQuality = if (inspection.isValid) inspection.determinedQuality else RecordingQuality.MIXED_UNVERIFIED,
-                        captureTier = CallCaptureTier.OEM_IMPORT,
-                        audioFilePath = file.absolutePath,
-                        fileSizeBytes = importResult.fileSize
-                    )
-                    dao.insertCall(CallEntity.fromDomain(session))
-                }
-
-                is OemImportResult.NotFound -> {
-                    val unrecordedSession = CallSession(
-                        id = callId,
-                        phoneNumber = event.phoneNumber,
-                        direction = direction,
-                        startTimeEpochMs = event.startTimeMs,
-                        endTimeEpochMs = event.endTimeMs,
-                        durationMs = durationMs,
-                        recordingQuality = RecordingQuality.UNSUPPORTED,
-                        captureTier = CallCaptureTier.OEM_IMPORT,
-                        unrecordedReason = "OEM Ingestion: ${importResult.diagnosticReason}"
-                    )
-                    dao.insertCall(CallEntity.fromDomain(unrecordedSession))
-                }
-
-                is OemImportResult.AmbiguousCollision -> {
-                    val unrecordedSession = CallSession(
-                        id = callId,
-                        phoneNumber = event.phoneNumber,
-                        direction = direction,
-                        startTimeEpochMs = event.startTimeMs,
-                        endTimeEpochMs = event.endTimeMs,
-                        durationMs = durationMs,
-                        recordingQuality = RecordingQuality.UNSUPPORTED,
-                        captureTier = CallCaptureTier.OEM_IMPORT,
-                        unrecordedReason = "OEM Collision Safety: ${importResult.diagnosticReason}"
-                    )
-                    dao.insertCall(CallEntity.fromDomain(unrecordedSession))
-                }
-            }
-        } else {
-            // Metadata-only unsupported userspace record
-            val unrecordedSession = CallSession(
-                id = callId,
-                phoneNumber = event.phoneNumber,
-                direction = direction,
-                startTimeEpochMs = event.startTimeMs,
-                endTimeEpochMs = event.endTimeMs,
-                durationMs = durationMs,
-                recordingQuality = RecordingQuality.UNSUPPORTED,
-                captureTier = capability.tier,
-                unrecordedReason = capability.physicalLimitationReason
-            )
-            dao.insertCall(CallEntity.fromDomain(unrecordedSession))
         }
     }
 }

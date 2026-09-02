@@ -6,9 +6,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 
-enum class OemPermissionState {
-    GRANTED,
-    DENIED
+enum class OemPermissionState(val displayName: String) {
+    GRANTED("Access Granted"),
+    DENIED("Permission Required"),
+    PERMANENTLY_DENIED("Settings Configuration Required")
 }
 
 object OemPermissionManager {

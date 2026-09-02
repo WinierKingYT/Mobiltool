@@ -42,12 +42,6 @@
             </intent-filter>
         </activity>
 
-        <!-- P1: Automatic Call Capture Foreground Service (DataSync / Session Coordinator) -->
-        <service
-            android:name=".service.CallCaptureForegroundService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
-
         <!-- P1: Telephony Call State BroadcastReceiver (Protected by READ_PHONE_STATE) -->
         <receiver
             android:name=".receiver.CallStateReceiver"
@@ -55,7 +49,6 @@
             android:permission="android.permission.READ_PHONE_STATE">
             <intent-filter>
                 <action android:name="android.intent.action.PHONE_STATE" />
-                <action android:name="android.intent.action.NEW_OUTGOING_CALL" />
             </intent-filter>
         </receiver>
 

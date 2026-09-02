@@ -29,7 +29,7 @@ class PersonalToolApplication : Application() {
         // Asynchronous Staging Cleanup & Call Crash Safety Recovery at startup
         CoroutineScope(Dispatchers.IO).launch {
             StagingCleaner.cleanStagingDirectory(stagingDirectory)
-            com.personaltool.app.capture.CallRecordingJournal.recoverPendingSessions(this@PersonalToolApplication)
+            com.personaltool.app.capture.CallLifecycleJournal.reconcileAbandonedSessions(this@PersonalToolApplication)
         }
     }
 }
