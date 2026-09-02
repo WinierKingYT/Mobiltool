@@ -73,9 +73,16 @@ fun RemoteDesktopViewerScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 StatusBadge(text = "LABS // EXPERIMENTAL DESKTOP", severity = BadgeSeverity.WARNING)
                 Spacer(modifier = Modifier.width(8.dp))
-                MetricReadout(label = "LATENCY", value = "${session.latencyMs} ms", isHighlighted = true)
+                MetricReadout(
+                    label = "LATENCY",
+                    value = if (session.isConnected && session.latencyMs > 0) "${session.latencyMs} ms" else "--",
+                    isHighlighted = session.isConnected && session.latencyMs > 0
+                )
                 Spacer(modifier = Modifier.width(6.dp))
-                MetricReadout(label = "FPS", value = "${session.currentFps}")
+                MetricReadout(
+                    label = "FPS",
+                    value = if (session.isConnected && session.currentFps > 0) "${session.currentFps}" else "--"
+                )
             }
 
             Row(verticalAlignment = Alignment.CenterVertically) {

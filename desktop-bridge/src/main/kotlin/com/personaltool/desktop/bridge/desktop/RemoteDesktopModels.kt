@@ -33,8 +33,8 @@ data class RemoteDesktopSessionState(
     val quality: StreamQualityProfile = StreamQualityProfile.BALANCED,
     val mouseMode: MouseControlMode = MouseControlMode.DIRECT_TOUCH,
     val transportMode: TransportMode = TransportMode.DIRECT_LAN,
-    val latencyMs: Int = 12,
-    val currentFps: Int = 30,
+    val latencyMs: Int = 0,
+    val currentFps: Int = 0,
     val isUacPromptActive: Boolean = false,
     val lastInputFeedback: String? = null
 )

@@ -11,9 +11,9 @@ import kotlinx.coroutines.flow.update
 data class TransportState(
     val currentTransport: TransportMode = TransportMode.DIRECT_LAN,
     val networkProfile: NetworkProfile = NetworkProfile.WIFI_UNMETERED,
-    val isReachable: Boolean = true,
-    val rttLatencyMs: Int = 12,
-    val lastHeartbeatEpochMs: Long = System.currentTimeMillis(),
+    val isReachable: Boolean = false,
+    val rttLatencyMs: Int = 0,
+    val lastHeartbeatEpochMs: Long = 0L,
     val e2eProof: EndToEndProof = EndToEndProof(
         deviceFingerprint = "fp-android-9a4f2",
         workstationFingerprint = "fp-win11-7c8e1",

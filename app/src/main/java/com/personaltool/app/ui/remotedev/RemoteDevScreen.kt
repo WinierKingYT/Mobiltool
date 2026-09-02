@@ -150,9 +150,13 @@ fun RemoteDevScreen(
                     TransportMode.P2P_HOLEPUNCH -> BadgeSeverity.INFO
                     TransportMode.RELAY_ENCRYPTED -> BadgeSeverity.WARNING
                 }
+                val isConnected = transport.isReachable && transport.rttLatencyMs > 0
                 StatusBadge(
-                    text = "${transport.currentTransport.displayName.uppercase()} (${transport.rttLatencyMs}ms)",
-                    severity = transportSeverity
+                    text = if (isConnected)
+                        "${transport.currentTransport.displayName.uppercase()} (${transport.rttLatencyMs}ms)"
+                    else
+                        "${transport.currentTransport.displayName.uppercase()} (STANDBY)",
+                    severity = if (isConnected) transportSeverity else BadgeSeverity.MUTED
                 )
 
                 Spacer(modifier = Modifier.width(6.dp))

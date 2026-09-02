@@ -27,7 +27,13 @@ class DesktopStreamManager {
 
     fun stopSession() {
         _sessionState.update {
-            it.copy(isConnected = false, isUacPromptActive = false, lastInputFeedback = "Session disconnected")
+            it.copy(
+                isConnected = false,
+                latencyMs = 0,
+                currentFps = 0,
+                isUacPromptActive = false,
+                lastInputFeedback = "Session disconnected"
+            )
         }
     }
 
