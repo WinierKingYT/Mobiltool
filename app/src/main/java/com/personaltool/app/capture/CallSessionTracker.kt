@@ -23,7 +23,12 @@ data class ActiveCallSnapshot(
 sealed class CallTerminationEvent {
     object NoActiveCall : CallTerminationEvent()
     data class MissedCall(val phoneNumber: String, val timestampMs: Long) : CallTerminationEvent()
-    data class ActiveCallEnded(val phoneNumber: String, val isIncoming: Boolean, val startTimeMs: Long, val endTimeMs: Long) : CallTerminationEvent()
+    data class ActiveCallEnded(
+        val phoneNumber: String,
+        val isIncoming: Boolean,
+        val startTimeMs: Long,
+        val endTimeMs: Long
+    ) : CallTerminationEvent()
 }
 
 object CallSessionTracker {
@@ -42,12 +47,16 @@ object CallSessionTracker {
 
     private val recordingInProgress = AtomicBoolean(false)
 
+    /**
+     * Triggered on incoming call ring. Sets state to RINGING, isIncoming = true.
+     */
     @Synchronized
     fun onRinging(incomingNumber: String?): Boolean {
         val current = _snapshot.value
+        val number = incomingNumber ?: current.phoneNumber ?: "Unknown Caller"
         _snapshot.value = ActiveCallSnapshot(
             state = TelephonyTrackedState.RINGING,
-            phoneNumber = incomingNumber ?: current.phoneNumber,
+            phoneNumber = number,
             isIncoming = true,
             isRecordingActive = false,
             ringingStartTimeMs = System.currentTimeMillis(),
@@ -56,20 +65,33 @@ object CallSessionTracker {
         return false // Do not start capture on ringing
     }
 
+    /**
+     * Triggered when call goes offhook (answered or dialed).
+     * Invariant:
+     * - If state was RINGING -> INCOMING answered.
+     * - If state was IDLE -> OUTGOING dialed.
+     */
     @Synchronized
-    fun onOffhook(dialedNumber: String?): Boolean {
+    fun onOffhook(number: String?): Boolean {
         val current = _snapshot.value
-        val number = dialedNumber ?: current.phoneNumber ?: "Unknown"
         val isFirstTransition = recordingInProgress.compareAndSet(false, true)
+
         val isIncoming = if (isFirstTransition) {
-            current.state == TelephonyTrackedState.RINGING && current.isIncoming
+            current.state == TelephonyTrackedState.RINGING
         } else {
             current.isIncoming
         }
 
+        val resolvedNumber = when {
+            !number.isNullOrBlank() -> number
+            !current.phoneNumber.isNullOrBlank() -> current.phoneNumber
+            isIncoming -> "Unknown Caller"
+            else -> "Outgoing Call (Number Unavailable)"
+        }
+
         _snapshot.value = ActiveCallSnapshot(
             state = TelephonyTrackedState.OFFHOOK,
-            phoneNumber = number,
+            phoneNumber = resolvedNumber,
             isIncoming = isIncoming,
             isRecordingActive = isFirstTransition,
             ringingStartTimeMs = current.ringingStartTimeMs,
@@ -79,6 +101,13 @@ object CallSessionTracker {
         return isFirstTransition
     }
 
+    /**
+     * Triggered when call terminates to IDLE.
+     * Invariant:
+     * - RINGING -> IDLE = Missed incoming call.
+     * - OFFHOOK -> IDLE = Active call ended (triggers post-call finalization).
+     * - IDLE -> IDLE (duplicate) = NoActiveCall.
+     */
     @Synchronized
     fun onIdle(): CallTerminationEvent {
         val current = _snapshot.value
@@ -96,7 +125,7 @@ object CallSessionTracker {
             wasRecording || current.state == TelephonyTrackedState.OFFHOOK -> {
                 // Call was active/offhook -> Ended Call
                 CallTerminationEvent.ActiveCallEnded(
-                    phoneNumber = current.phoneNumber ?: "Unknown",
+                    phoneNumber = current.phoneNumber ?: if (current.isIncoming) "Unknown Caller" else "Outgoing Call",
                     isIncoming = current.isIncoming,
                     startTimeMs = current.callStartTimeMs ?: now,
                     endTimeMs = now
@@ -132,4 +161,3 @@ object CallSessionTracker {
         )
     }
 }
-

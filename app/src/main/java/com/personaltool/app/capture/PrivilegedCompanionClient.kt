@@ -47,8 +47,8 @@ object PrivilegedCompanionClient {
             socket.connect(address)
             socket.soTimeout = 1000
 
-            val output = socket.outputStream
-            val input = socket.inputStream
+            val output = socket.outputStream ?: return false
+            val input = socket.inputStream ?: return false
 
             output.write(MAGIC_HEADER.toByteArray(Charsets.UTF_8))
             output.write(CMD_PING.toByteArray(Charsets.UTF_8))
@@ -86,11 +86,17 @@ object PrivilegedCompanionClient {
         val connected = try {
             val address = LocalSocketAddress(PRIMARY_SOCKET_PATH, LocalSocketAddress.Namespace.FILESYSTEM)
             socket.connect(address)
+            if (socket.outputStream == null || socket.inputStream == null) {
+                throw IllegalStateException("Socket streams unavailable")
+            }
             true
         } catch (_: Exception) {
             try {
                 val fallbackAddr = LocalSocketAddress(FALLBACK_SOCKET_PATH, LocalSocketAddress.Namespace.FILESYSTEM)
                 socket.connect(fallbackAddr)
+                if (socket.outputStream == null || socket.inputStream == null) {
+                    throw IllegalStateException("Fallback socket streams unavailable")
+                }
                 true
             } catch (err: Exception) {
                 isCapturing.set(false)
@@ -109,8 +115,8 @@ object PrivilegedCompanionClient {
         captureThread = Thread({
             var totalBytes = 0L
             try {
-                val output = socket.outputStream
-                val input = socket.inputStream
+                val output = socket.outputStream ?: throw IllegalStateException("outputStream is null")
+                val input = socket.inputStream ?: throw IllegalStateException("inputStream is null")
 
                 // Handshake & Start Command
                 output.write(MAGIC_HEADER.toByteArray(Charsets.UTF_8))
@@ -155,8 +161,8 @@ object PrivilegedCompanionClient {
             try {
                 activeSocket?.let { socket ->
                     val output = socket.outputStream
-                    output.write(CMD_STOP.toByteArray(Charsets.UTF_8))
-                    output.flush()
+                    output?.write(CMD_STOP.toByteArray(Charsets.UTF_8))
+                    output?.flush()
                 }
             } catch (_: Exception) {
                 // Ignore socket teardown errors

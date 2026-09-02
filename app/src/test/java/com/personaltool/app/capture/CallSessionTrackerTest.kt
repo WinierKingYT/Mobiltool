@@ -56,8 +56,8 @@ class CallSessionTrackerTest {
     }
 
     @Test
-    fun outgoingCall_idleThenOffhook_setsDirectionOutgoing() {
-        // Direct Offhook from IDLE
+    fun outgoingCall_idleThenOffhook_setsDirectionOutgoing_andCannotBecomeIncoming() {
+        // Direct Offhook from IDLE -> MUST be Outgoing
         val shouldStart = CallSessionTracker.onOffhook("+905550001122")
         assertThat(shouldStart).isTrue()
         assertThat(CallSessionTracker.snapshot.value.isIncoming).isFalse()
@@ -67,11 +67,50 @@ class CallSessionTrackerTest {
         assertThat(termination).isInstanceOf(CallTerminationEvent.ActiveCallEnded::class.java)
         val ended = termination as CallTerminationEvent.ActiveCallEnded
         assertThat(ended.isIncoming).isFalse()
+        assertThat(ended.phoneNumber).isEqualTo("+905550001122")
     }
 
     @Test
-    fun idleWhenAlreadyIdle_returnsNoActiveCall() {
+    fun outgoingCall_numberUnavailable_setsAccurateFallback_andIncomingFalse() {
+        val shouldStart = CallSessionTracker.onOffhook(null)
+        assertThat(shouldStart).isTrue()
+        assertThat(CallSessionTracker.snapshot.value.isIncoming).isFalse()
+        assertThat(CallSessionTracker.snapshot.value.phoneNumber).contains("Outgoing")
+
         val termination = CallSessionTracker.onIdle()
-        assertThat(termination).isInstanceOf(CallTerminationEvent.NoActiveCall::class.java)
+        val ended = termination as CallTerminationEvent.ActiveCallEnded
+        assertThat(ended.isIncoming).isFalse()
+        assertThat(ended.phoneNumber).contains("Outgoing")
+    }
+
+    @Test
+    fun privateIncomingCall_preservesUnknownCaller_andIncomingTrue() {
+        CallSessionTracker.onRinging(null)
+        assertThat(CallSessionTracker.snapshot.value.isIncoming).isTrue()
+        assertThat(CallSessionTracker.snapshot.value.phoneNumber).contains("Unknown")
+
+        CallSessionTracker.onOffhook(null)
+        assertThat(CallSessionTracker.snapshot.value.isIncoming).isTrue()
+
+        val termination = CallSessionTracker.onIdle()
+        val ended = termination as CallTerminationEvent.ActiveCallEnded
+        assertThat(ended.isIncoming).isTrue()
+    }
+
+    @Test
+    fun duplicateOffhookAndIdle_remainIdempotent() {
+        CallSessionTracker.onOffhook("+905551112233")
+        val duplicate1 = CallSessionTracker.onOffhook("+905551112233")
+        val duplicate2 = CallSessionTracker.onOffhook("+905551112233")
+        assertThat(duplicate1).isFalse()
+        assertThat(duplicate2).isFalse()
+
+        val termination1 = CallSessionTracker.onIdle()
+        val termination2 = CallSessionTracker.onIdle()
+        val termination3 = CallSessionTracker.onIdle()
+
+        assertThat(termination1).isInstanceOf(CallTerminationEvent.ActiveCallEnded::class.java)
+        assertThat(termination2).isInstanceOf(CallTerminationEvent.NoActiveCall::class.java)
+        assertThat(termination3).isInstanceOf(CallTerminationEvent.NoActiveCall::class.java)
     }
 }

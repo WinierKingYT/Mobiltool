@@ -29,7 +29,7 @@ graph TD
     B -->|Standard Unprivileged Userspace| E[Path 3: UNSUPPORTED Fail-Closed]
     
     C --> F[Dual-Stream PCM/AAC via UNIX Domain Socket]
-    D --> G[MediaStore.Audio Ingestion & Correlation]
+    D --> G[MediaStore.Audio Post-Call Ingestion & Correlation]
     E --> H[Metadata-Only Session: UNSUPPORTED Diagnostic]
     
     F --> I[Audio File Inspector & Quality Validation]
@@ -52,9 +52,9 @@ graph TD
 - **Status**: **CANDIDATE IMPLEMENTATION** (Requires physical preflight validation on target device).
 - **Mechanism**: Samsung OneUI (in supported CSC regions) and Xiaomi HyperOS include proprietary in-call recorders built into the system dialer (`com.samsung.android.incallui`). These recorders output dual-channel audio directly to MediaStore / external storage.
 - **Storage & Ingestion Pipeline**:
-  - Modern Scoped Storage compliance via `MediaStore.Audio.Media.EXTERNAL_CONTENT_URI` with `READ_MEDIA_AUDIO` (Android 13+) / `READ_EXTERNAL_STORAGE` (Android $\le$ 12).
+  - Modern Scoped Storage compliance via `MediaStore.Audio.Media.EXTERNAL_CONTENT_URI` with runtime `READ_MEDIA_AUDIO` (Android 13+) / `READ_EXTERNAL_STORAGE` (Android $\le$ 12).
   - Explicit avoidance of `MANAGE_EXTERNAL_STORAGE` (no "All Files Access" required).
-  - Strict time-window and phone-number correlation engine.
+  - Strict multi-factor correlation engine (Timestamp window $[T_{start}-15s \dots T_{end}+25s]$ + Call Duration Matching + Anti-Collision Phone Matching).
   - Atomic copy into Mobiltool internal vault (`filesDir/calls/`), followed by ISO MP4 container verification.
 - **Decision**: Selected as the **Primary Candidate Pathway** for physical preflight feasibility testing if the user''s device supports native call recording.
 
@@ -63,31 +63,29 @@ graph TD
 
 ---
 
-## 3. Truthful Quality Invariants & Physical Qualification
+## 3. Truthful Quality Invariants & Candidate vs. Qualified Semantics
 
-**Critical Invariant**: Valid audio file container structure $\neq$ Verified Bidirectional Audio.
-
-1. **Pre-Qualification Quality**:
-   - Audio files harvested via candidate `OEM_IMPORT` or candidate `PRIVILEGED_DIRECT` that pass technical inspection (valid `ftyp` atom, duration $\ge 500$ms, bitrate $\ge 8000$bps) are assigned **`RecordingQuality.MIXED_UNVERIFIED`** by default.
-2. **Post-Qualification Quality (`VERIFIED_BIDIRECTIONAL`)**:
-   - `VERIFIED_BIDIRECTIONAL` may ONLY be assigned once a physical qualification rule or verified profile confirms both local and remote parties are audible on that device and firmware build.
+**Critical Invariants**:
+1. `OEM_CANDIDATE_DETECTED != OEM_RECORDING_CONFIRMED != OEM_PROFILE_QUALIFIED`.
+2. `isTwoWaySupported` MUST remain `false` until the physical device profile is proven and qualified (`OEM_PROFILE_QUALIFIED` / `PRIVILEGED_QUALIFIED`).
+3. Audio files harvested via candidate `OEM_IMPORT` or candidate `PRIVILEGED_DIRECT` that pass technical inspection yield **`RecordingQuality.MIXED_UNVERIFIED`** by default.
+4. `RecordingQuality.VERIFIED_BIDIRECTIONAL` is strictly assigned only after human verification on a qualified profile.
 
 ---
 
-## 4. Foreground Service & Android 12–15 Background Lifecycle
+## 4. Background Execution & Android 12–15 Broadcast Durability
 
-1. **Elimination of Illegal Microphone FGS**:
-   - Because `OEM_IMPORT` does not record microphone audio in real time during the call, Mobiltool does **not** launch a `foregroundServiceType="microphone"` service from the background on `PHONE_STATE` broadcasts.
-2. **Post-Call Ingestion Model**:
-   - Telephony state changes are tracked in userspace memory.
-   - When the call transitions to `IDLE`, post-call harvesting and metadata indexing are executed immediately in background coroutines or a non-mic `dataSync` service if long-running processing is needed.
-   - This complies 100% with Android 12–15 background start restrictions without bypassing platform security.
+1. **Elimination of Long-Lived In-Call FGS**:
+   - `OEM_IMPORT` does not record audio in userspace during the call. The OEM dialer handles recording independently.
+   - On `PHONE_STATE/OFFHOOK`: Mobiltool persists minimal active-call state in `CallRecordingJournal` without holding an FGS or wakelock.
+   - On `PHONE_STATE/IDLE`: Post-call ingestion is executed via `goAsync()` in a bounded background coroutine with OEM flush delay.
+2. **Platform Compliance**:
+   - Fully compliant with Android 12–15 background execution limits without relying on illegal while-in-use microphone foreground service starts.
+   - `CallStateReceiver` is secured with `android:permission="android.permission.READ_PHONE_STATE"`.
 
 ---
 
 ## 5. Physical Device Preflight Plan
-
-Before full qualification, execute a **2-Phase Feasibility Gate**:
 
 1. **Phase 1: Device Preflight Questionnaire**: Determine target model, Android OS version, root status, and native OEM call recording support.
 2. **Phase 2: 1–2 Call Feasibility Test**:
