@@ -2,7 +2,7 @@
 
 ```text
 ACTIVE_PART = P0
-STATUS = COMPLETED (EXIT GATE READY)
+STATUS = IN_PROGRESS
 ```
 
 Allowed:
