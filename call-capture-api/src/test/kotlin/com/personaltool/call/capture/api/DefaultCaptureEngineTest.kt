@@ -43,19 +43,20 @@ class DefaultCaptureEngineTest {
     }
 
     @Test
-    fun tier2_systemCompanion_capabilityIsTrue() = runTest {
+    fun tier2_unlinkedCompanion_inP0_failsClosed() = runTest {
         val engine = DefaultCaptureEngine(
             storageDir = tempFolder.root,
             captureTier = CallCaptureTier.TIER_2_SYSTEM_COMPANION
         )
 
         val capability = engine.checkCapability()
-        assertThat(capability.isSupported).isTrue()
-        assertThat(capability.captureEngineType).isEqualTo("ROOT_COMPANION_ALSA")
+        // Invariant: Unlinked companion in P0 must fail closed
+        assertThat(capability.isSupported).isFalse()
+        assertThat(capability.captureEngineType).isEqualTo("UNLINKED_COMPANION")
     }
 
     @Test
-    fun tier2_systemCompanion_startCapture_succeedsAndEntersRecordingState() = runTest {
+    fun unlinkedEngine_startCapture_returnsBlockedError() = runTest {
         val engine = DefaultCaptureEngine(
             storageDir = tempFolder.root,
             captureTier = CallCaptureTier.TIER_2_SYSTEM_COMPANION
@@ -63,40 +64,20 @@ class DefaultCaptureEngineTest {
 
         val result = engine.startCapture("call-202", "+905559876543")
 
-        assertThat(result).isInstanceOf(AppResult.Success::class.java)
-        assertThat(engine.activeState.value).isNotNull()
-        assertThat(engine.activeState.value?.callId).isEqualTo("call-202")
-        assertThat(engine.activeState.value?.state).isEqualTo(CallLifecycleState.RECORDING)
-    }
-
-    @Test
-    fun cancelCapture_resetsActiveStateToNull() = runTest {
-        val engine = DefaultCaptureEngine(
-            storageDir = tempFolder.root,
-            captureTier = CallCaptureTier.TIER_2_SYSTEM_COMPANION
-        )
-
-        engine.startCapture("call-303", "+905551112233")
-        assertThat(engine.activeState.value).isNotNull()
-
-        val cancelResult = engine.cancelCapture("call-303")
-        assertThat(cancelResult).isInstanceOf(AppResult.Success::class.java)
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        assertThat((result as AppResult.Error).message).contains("blocked on this device")
         assertThat(engine.activeState.value).isNull()
     }
 
     @Test
-    fun stopCapture_whenNoFileRecorded_returnsError() = runTest {
+    fun micAndUserspace_neverProducesVerifiedBidirectional() = runTest {
         val engine = DefaultCaptureEngine(
             storageDir = tempFolder.root,
-            captureTier = CallCaptureTier.TIER_2_SYSTEM_COMPANION
+            captureTier = CallCaptureTier.TIER_1_STANDARD_USERSPACE,
+            isLoudspeakerActive = false
         )
 
-        engine.startCapture("call-404", "+905550000000")
-        val stopResult = engine.stopCapture("call-404")
-
-        assertThat(stopResult).isInstanceOf(AppResult.Error::class.java)
-        val errorMessage = (stopResult as AppResult.Error).message
-        assertThat(errorMessage).contains("No physical audio stream was recorded on disk")
-        assertThat(engine.activeState.value).isNull()
+        val capability = engine.checkCapability()
+        assertThat(capability.isSupported).isFalse()
     }
 }

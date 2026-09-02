@@ -5,7 +5,6 @@ import android.media.AudioManager
 import android.os.Build
 import com.personaltool.core.model.call.CallCaptureTier
 import com.personaltool.core.model.call.RecordingQuality
-import java.io.File
 
 data class DetailedCaptureCapability(
     val tier: CallCaptureTier,
@@ -24,50 +23,34 @@ object CallCaptureCapabilityDetector {
         val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
         val isSpeakerOn = audioManager?.isSpeakerphoneOn == true
 
-        val rootCompanionPresent = checkRootCompanionPresent()
+        // Truth Gate: Generic root presence (/sbin/su) does NOT imply a functional Mobiltool system companion.
+        // Privileged companion daemon protocol is unlinked in P0 baseline; fail-closed.
+        val tier = CallCaptureTier.TIER_1_STANDARD_USERSPACE
+        val isTwoWaySupported = false
 
-        val tier = if (rootCompanionPresent) {
-            CallCaptureTier.TIER_2_SYSTEM_COMPANION
+        // Standard microphone and VOICE_COMMUNICATION capture uplink/ambient only; never VERIFIED_BIDIRECTIONAL.
+        val expectedQuality = if (isSpeakerOn) {
+            RecordingQuality.MIXED_UNVERIFIED
         } else {
-            CallCaptureTier.TIER_1_STANDARD_USERSPACE
-        }
-
-        val isTwoWaySupported = rootCompanionPresent
-
-        val expectedQuality = when {
-            rootCompanionPresent -> RecordingQuality.VERIFIED_BIDIRECTIONAL
-            isSpeakerOn -> RecordingQuality.MIXED_UNVERIFIED
-            else -> RecordingQuality.ONE_SIDED
+            RecordingQuality.ONE_SIDED
         }
 
         val limitationReason = when {
-            rootCompanionPresent -> "Root companion active: ALSA direct hardware tap enabled."
-            isSpeakerOn -> "Loudspeaker active: Remote audio captured acoustically via microphone."
-            Build.VERSION.SDK_INT >= 29 -> "Android 10+ SELinux restriction: Voice call downlink is restricted in userspace."
-            else -> "AOSP Userspace: Standard microphone captures uplink audio and ambient sound."
+            isSpeakerOn -> "Loudspeaker active: Remote audio captured acoustically via microphone (unverified acoustic mix)."
+            Build.VERSION.SDK_INT >= 29 -> "Android 10+ SELinux restriction: Direct voice call downlink is blocked in userspace. Ambient mic only."
+            else -> "AOSP Userspace: Standard microphone captures uplink audio and ambient sound only."
         }
 
         return DetailedCaptureCapability(
             tier = tier,
-            isTwoWaySupported = isTwoWaySupported,
-            audioSourceType = if (rootCompanionPresent) "ALSA_SYSTEM_HOOK" else "VOICE_COMMUNICATION_MIC",
+            isTwoWaySupported = false,
+            audioSourceType = "VOICE_COMMUNICATION_MIC",
             chipArchitecture = "${Build.MANUFACTURER} ${Build.MODEL} (API ${Build.VERSION.SDK_INT})",
-            rootCompanionDetected = rootCompanionPresent,
+            rootCompanionDetected = false,
             isLoudspeakerOn = isSpeakerOn,
             expectedQuality = expectedQuality,
             physicalLimitationReason = limitationReason
         )
     }
-
-    private fun checkRootCompanionPresent(): Boolean {
-        return runCatching {
-            val companionPaths = listOf(
-                "/system/bin/mobiltool_companion",
-                "/data/local/tmp/mobiltool_companion",
-                "/sbin/su",
-                "/system/xbin/su"
-            )
-            companionPaths.any { File(it).exists() }
-        }.getOrDefault(false)
-    }
 }
+

@@ -98,13 +98,19 @@ object AudioFileInspector {
                     )
                 }
                 else -> {
+                    // Invariant Guardrail: Audio container validity must never promote userspace recording to VERIFIED_BIDIRECTIONAL
+                    val safeQuality = if (defaultQuality == RecordingQuality.VERIFIED_BIDIRECTIONAL) {
+                        RecordingQuality.MIXED_UNVERIFIED
+                    } else {
+                        defaultQuality
+                    }
                     AudioFileInspectionResult(
                         isValid = true,
                         durationMs = durationMs,
                         bitrate = bitrate,
                         mimeType = mimeType,
                         fileSizeBytes = fileSize,
-                        determinedQuality = defaultQuality,
+                        determinedQuality = safeQuality,
                         rejectionReason = null
                     )
                 }

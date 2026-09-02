@@ -22,17 +22,15 @@ class DefaultCaptureEngine(
     private var captureStartTime = 0L
 
     override suspend fun checkCapability(): CaptureCapability {
-        val hasSystemPrivilege = captureTier == CallCaptureTier.TIER_2_SYSTEM_COMPANION
+        // Truth Gate: In P0 baseline, privileged companion daemon protocol is not yet linked.
+        // Fail-closed across both standard userspace and unlinked companion tier.
         return CaptureCapability(
-            isSupported = hasSystemPrivilege,
-            captureEngineType = if (hasSystemPrivilege) "ROOT_COMPANION_ALSA" else "RESTRICTED_AOSP_USERSPACE",
+            isSupported = false,
+            captureEngineType = if (captureTier == CallCaptureTier.TIER_2_SYSTEM_COMPANION) "UNLINKED_COMPANION" else "RESTRICTED_AOSP_USERSPACE",
             chipFamily = "Platform Native",
             requiresSystemPrivilege = true,
             supportedAudioFormats = listOf("m4a", "aac"),
-            notes = if (hasSystemPrivilege)
-                "System Companion active: Bidirectional hardware stream capture enabled"
-            else
-                "Android 9+ restriction: Direct call downlink is blocked in userspace. Ambient mic only."
+            notes = "Android 9+ restriction: Direct voice call downlink is blocked in userspace. Companion daemon not linked in P0."
         )
     }
 
@@ -53,7 +51,7 @@ class DefaultCaptureEngine(
             callId = callId,
             state = CallLifecycleState.RECORDING,
             durationSeconds = 0L,
-            currentQualityEstimate = RecordingQuality.VERIFIED_BIDIRECTIONAL,
+            currentQualityEstimate = if (isLoudspeakerActive) RecordingQuality.MIXED_UNVERIFIED else RecordingQuality.ONE_SIDED,
             outputFilePath = outputFile.absolutePath
         )
 
