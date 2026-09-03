@@ -617,4 +617,67 @@ class RealHttpStreamDownloaderTest {
         assertThat(probe.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN)
         assertThat(probe.contentLength).isEqualTo(mp4Bytes.size.toLong())
     }
+
+    @Test
+    fun extractor_probeDirectUrl_fakeVideoMp4HeaderWithRandomBinary_failsClosedWithoutAdvertisingFormat() = runTest {
+        val randomBytes = ByteArray(1024) { 0x55.toByte() }
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return if (method == "HEAD") {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                            contentLength = randomBytes.size.toLong(),
+                            contentType = "video/mp4",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 200,
+                            redirectCount = 0
+                        )
+                    )
+                } else {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(randomBytes),
+                            contentLength = randomBytes.size.toLong(),
+                            contentType = "video/mp4",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 206,
+                            redirectCount = 0
+                        )
+                    )
+                }
+            }
+        }
+
+        val fakeProberDownloader = RealHttpStreamDownloader(
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+        val extractor = DefaultMediaExtractor(
+            dnsLookup = publicDns,
+            streamDownloader = fakeProberDownloader
+        )
+
+        val probeResult = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://example.com/fake_video.mp4",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+        assertThat(probeResult).isInstanceOf(AppResult.Error::class.java)
+        val error = probeResult as AppResult.Error
+        assertThat(error.message).contains("Unrecognized binary container")
+        assertThat(error.code).isEqualTo(ErrorCode.VALIDATION_ERROR)
+    }
 }

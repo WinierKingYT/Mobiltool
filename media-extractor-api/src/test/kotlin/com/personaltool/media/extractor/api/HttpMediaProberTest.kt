@@ -314,6 +314,217 @@ class HttpMediaProberTest {
     }
 
     @Test
+    fun probeDirectMediaUrl_headVideoMp4_getRandomBinary_failsValidation() {
+        val randomPayload = ByteArray(1024) { 0x33.toByte() }
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return if (method == "HEAD") {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                            contentLength = 1048576L,
+                            contentType = "video/mp4",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 200,
+                            redirectCount = 0
+                        )
+                    )
+                } else {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(randomPayload),
+                            contentLength = 1048576L,
+                            contentType = "video/mp4",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 206,
+                            redirectCount = 0
+                        )
+                    )
+                }
+            }
+        }
+
+        val result = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://cdn.example.com/fake_video.mp4",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.message).contains("Unrecognized binary container")
+        assertThat(error.code).isEqualTo(ErrorCode.VALIDATION_ERROR)
+    }
+
+    @Test
+    fun probeDirectMediaUrl_headAudioMpeg_getRandomBinary_failsValidation() {
+        val randomPayload = ByteArray(1024) { 0x44.toByte() }
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return if (method == "HEAD") {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                            contentLength = 524288L,
+                            contentType = "audio/mpeg",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 200,
+                            redirectCount = 0
+                        )
+                    )
+                } else {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(randomPayload),
+                            contentLength = 524288L,
+                            contentType = "audio/mpeg",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 206,
+                            redirectCount = 0
+                        )
+                    )
+                }
+            }
+        }
+
+        val result = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://cdn.example.com/fake_audio.mp3",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.message).contains("Unrecognized binary container")
+        assertThat(error.code).isEqualTo(ErrorCode.VALIDATION_ERROR)
+    }
+
+    @Test
+    fun probeDirectMediaUrl_headVideoWebm_getUnknownBinary_failsValidation() {
+        val randomPayload = ByteArray(1024) { 0x77.toByte() }
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return if (method == "HEAD") {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                            contentLength = 2097152L,
+                            contentType = "video/webm",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 200,
+                            redirectCount = 0
+                        )
+                    )
+                } else {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(randomPayload),
+                            contentLength = 2097152L,
+                            contentType = "video/webm",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 206,
+                            redirectCount = 0
+                        )
+                    )
+                }
+            }
+        }
+
+        val result = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://cdn.example.com/fake_video.webm",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.message).contains("Unrecognized binary container")
+        assertThat(error.code).isEqualTo(ErrorCode.VALIDATION_ERROR)
+    }
+
+    @Test
+    fun probeDirectMediaUrl_headVideoMp4_getNetworkFailure_failsNetworkError() {
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return if (method == "HEAD") {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                            contentLength = 1048576L,
+                            contentType = "video/mp4",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 200,
+                            redirectCount = 0
+                        )
+                    )
+                } else {
+                    AppResult.Error(
+                        message = "Connection reset by peer during payload probe",
+                        code = ErrorCode.NETWORK_ERROR
+                    )
+                }
+            }
+        }
+
+        val result = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://cdn.example.com/video.mp4",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.message).contains("Connection reset by peer")
+        assertThat(error.code).isEqualTo(ErrorCode.NETWORK_ERROR)
+    }
+
+    @Test
     fun probeDirectMediaUrl_validMp4_succeedsWithProvenExtension() {
         val mp4Payload = createValidMp4Header()
         val fakeTransport = object : SafeHttpTransportEngine {
@@ -370,7 +581,7 @@ class HttpMediaProberTest {
     }
 
     @Test
-    fun probeDirectMediaUrl_validMp3Audio_succeedsWithAudioKindAndProvenExtension() {
+    fun probeDirectMediaUrl_headOctetStream_validMp3Audio_succeedsWithAudioKindAndProvenExtension() {
         val mp3Payload = createValidMp3Header()
         val fakeTransport = object : SafeHttpTransportEngine {
             override fun openSafeConnection(
@@ -388,7 +599,7 @@ class HttpMediaProberTest {
                             response = null,
                             responseBodyStream = ByteArrayInputStream(ByteArray(0)),
                             contentLength = 524288L,
-                            contentType = "audio/mpeg",
+                            contentType = "application/octet-stream",
                             requestedUrl = initialUrl,
                             finalUrl = initialUrl,
                             responseCode = 200,
@@ -401,7 +612,7 @@ class HttpMediaProberTest {
                             response = null,
                             responseBodyStream = ByteArrayInputStream(mp3Payload),
                             contentLength = 524288L,
-                            contentType = "audio/mpeg",
+                            contentType = "application/octet-stream",
                             requestedUrl = initialUrl,
                             finalUrl = initialUrl,
                             responseCode = 206,
