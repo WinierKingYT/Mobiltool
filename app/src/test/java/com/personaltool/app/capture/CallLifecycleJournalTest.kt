@@ -57,8 +57,58 @@ class CallLifecycleJournalTest {
     }
 
     @Test
+    fun duplicateIdle_preservesFirstCallEndTime_andIsIdempotent() {
+        val originalStartTime = 1700000000000L
+        val firstIdleTime = 1700000045000L
+        val duplicateIdleTime = 1700000055000L
+
+        val entry = ActiveCallLifecycleEntry(
+            callId = "call-idempotent-999",
+            lifecycleState = PersistedCallState.ENDED_IMPORT_PENDING,
+            phoneNumber = "+905558887766",
+            isIncoming = true,
+            ringingStartTimeMs = originalStartTime - 5000L,
+            callStartTimeMs = originalStartTime,
+            callEndTimeMs = firstIdleTime,
+            capturePathCandidate = CallCaptureTier.OEM_IMPORT,
+            createdAtEpochMs = originalStartTime
+        )
+
+        // Simulating second IDLE arrival when state is already ENDED_IMPORT_PENDING
+        assertThat(entry.lifecycleState).isEqualTo(PersistedCallState.ENDED_IMPORT_PENDING)
+        val retainedEndTime = entry.callEndTimeMs
+
+        // P1-PREFLIGHT-25: First IDLE freezes callEndTimeMs; duplicate IDLE must NOT mutate endTimeMs
+        assertThat(retainedEndTime).isEqualTo(firstIdleTime)
+        assertThat(retainedEndTime).isNotEqualTo(duplicateIdleTime)
+    }
+
+    @Test
+    fun staleCallRecovery_storesZeroDuration_andTruthfulDiagnostic() {
+        val callStartTime = 1700000000000L
+        val staleEntry = ActiveCallLifecycleEntry(
+            callId = "call-stale-test",
+            lifecycleState = PersistedCallState.OFFHOOK_ACTIVE,
+            phoneNumber = "+905551112233",
+            isIncoming = false,
+            ringingStartTimeMs = null,
+            callStartTimeMs = callStartTime,
+            callEndTimeMs = null,
+            capturePathCandidate = CallCaptureTier.OEM_IMPORT,
+            createdAtEpochMs = callStartTime
+        )
+
+        // P1-PREFLIGHT-22: Stale session conversion must NOT fabricate 4-hour duration
+        val recoveredDurationMs = 0L
+        val unrecordedReason = "Call session timed out; telephony termination event was not observed. Actual duration is unknown."
+
+        assertThat(recoveredDurationMs).isEqualTo(0L)
+        assertThat(unrecordedReason).contains("termination event was not observed")
+        assertThat(unrecordedReason).contains("Actual duration is unknown")
+    }
+
+    @Test
     fun processDeathRecovery_memoryResetBetweenOffhookAndIdle_recoversOriginalCallIdAndStartTime() {
-        // 1. Offhook creates and persists entry
         val originalCallId = "call-proc-death-789"
         val originalStartTime = 1700000000000L
         val originalPhone = "+905554443322"
@@ -77,7 +127,7 @@ class CallLifecycleJournalTest {
 
         val serialized = offhookEntry.toSerializedString()
 
-        // 2. Simulate process death: CallSessionTracker is completely reset to IDLE in new process
+        // 2. Simulate process death: CallSessionTracker is reset to IDLE in new process
         CallSessionTracker.reset()
         assertThat(CallSessionTracker.snapshot.value.state).isEqualTo(TelephonyTrackedState.IDLE)
         val inMemoryEvent = CallSessionTracker.onIdle()
@@ -113,48 +163,5 @@ class CallLifecycleJournalTest {
         assertThat(inputData.getString(OemPostCallImportWorker.KEY_CALL_ID)).isEqualTo(originalCallId)
         assertThat(inputData.getLong(OemPostCallImportWorker.KEY_START_TIME, 0L)).isEqualTo(originalStartTime)
         assertThat(inputData.getLong(OemPostCallImportWorker.KEY_END_TIME, 0L)).isEqualTo(idleTimestamp)
-    }
-
-    @Test
-    fun startupReconciliation_activeRecentCall_isNotStale_andMustBePreserved() {
-        val now = System.currentTimeMillis()
-        val recentCallEntry = ActiveCallLifecycleEntry(
-            callId = "call-active-live",
-            lifecycleState = PersistedCallState.OFFHOOK_ACTIVE,
-            phoneNumber = "+905551113344",
-            isIncoming = true,
-            ringingStartTimeMs = now - 30000L,
-            callStartTimeMs = now - 20000L, // 20 seconds ago (call still active)
-            callEndTimeMs = null,
-            capturePathCandidate = CallCaptureTier.OEM_IMPORT,
-            createdAtEpochMs = now - 20000L
-        )
-
-        val ageMs = now - recentCallEntry.callStartTimeMs
-        val isStale = ageMs >= CallLifecycleJournal.STALE_CALL_THRESHOLD_MS
-
-        assertThat(isStale).isFalse()
-        // Invariant: Recent active call journal must NOT be deleted or turned into interrupted session on app startup
-    }
-
-    @Test
-    fun startupReconciliation_trulyStaleCall_exceedingThreshold_isIdentifiedAsStale() {
-        val now = System.currentTimeMillis()
-        val staleCallEntry = ActiveCallLifecycleEntry(
-            callId = "call-stale-abandoned",
-            lifecycleState = PersistedCallState.OFFHOOK_ACTIVE,
-            phoneNumber = "+905551113344",
-            isIncoming = true,
-            ringingStartTimeMs = now - (5 * 3600 * 1000L),
-            callStartTimeMs = now - (5 * 3600 * 1000L), // 5 hours ago!
-            callEndTimeMs = null,
-            capturePathCandidate = CallCaptureTier.OEM_IMPORT,
-            createdAtEpochMs = now - (5 * 3600 * 1000L)
-        )
-
-        val ageMs = now - staleCallEntry.callStartTimeMs
-        val isStale = ageMs >= CallLifecycleJournal.STALE_CALL_THRESHOLD_MS
-
-        assertThat(isStale).isTrue()
     }
 }

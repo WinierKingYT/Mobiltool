@@ -55,20 +55,15 @@ class CallsViewModel(
     val recordingState = recorder.state
     val playerState = player.state
 
-    fun refreshCapability(shouldShowRationale: Boolean = true) {
+    fun refreshCapability() {
         val context = getApplication<Application>().applicationContext
-        _permissionState.value = OemPermissionManager.getPermissionState(context, shouldShowRationale)
+        _permissionState.value = OemPermissionManager.getPermissionState(context)
         _hardwareCapability.value = CallCaptureCapabilityDetector.detectCapability(context)
     }
 
     fun onPermissionResult(isGranted: Boolean, shouldShowRationale: Boolean) {
         val context = getApplication<Application>().applicationContext
-        OemPermissionManager.markPermissionRequested(context)
-        _permissionState.value = OemPermissionManager.evaluatePermissionState(
-            hasPermission = isGranted,
-            hasRequestedBefore = true,
-            shouldShowRationale = shouldShowRationale
-        )
+        _permissionState.value = OemPermissionManager.recordPermissionResult(context, isGranted, shouldShowRationale)
         _hardwareCapability.value = CallCaptureCapabilityDetector.detectCapability(context)
     }
 

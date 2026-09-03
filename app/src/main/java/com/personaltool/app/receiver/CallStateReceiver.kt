@@ -28,6 +28,7 @@ import java.util.UUID
 /**
  * Durable, background-safe telephony broadcast receiver.
  * Uses CallLifecycleJournal as the authoritative cross-process source of truth for OFFHOOK -> IDLE recovery.
+ * Fully idempotent against duplicate IDLE broadcasts (P1-PREFLIGHT-25).
  */
 class CallStateReceiver : BroadcastReceiver() {
 
@@ -80,7 +81,7 @@ class CallStateReceiver : BroadcastReceiver() {
                             activeJournalEntry.lifecycleState == PersistedCallState.OFFHOOK_ACTIVE ||
                             activeJournalEntry.lifecycleState == PersistedCallState.ENDED_IMPORT_PENDING
                         )) {
-                    // Authoritative cross-process active call recovery
+                    // Authoritative cross-process active call recovery (idempotent: first IDLE freezes endTimeMs)
                     val updatedEntry = CallLifecycleJournal.recordIdle(context, now) ?: activeJournalEntry
                     val capability = CallCaptureCapabilityDetector.detectCapability(context)
 
@@ -91,7 +92,7 @@ class CallStateReceiver : BroadcastReceiver() {
                     val phoneNumber = updatedEntry.phoneNumber
 
                     if (capability.canAttemptFeasibility && capability.tier == CallCaptureTier.OEM_IMPORT) {
-                        // Enqueue durable WorkManager task with unique work semantics
+                        // Enqueue durable WorkManager task with unique work semantics using KEEP policy
                         val workRequest = OneTimeWorkRequestBuilder<OemPostCallImportWorker>()
                             .setInputData(
                                 OemPostCallImportWorker.createInputData(
@@ -107,7 +108,7 @@ class CallStateReceiver : BroadcastReceiver() {
 
                         WorkManager.getInstance(context).enqueueUniqueWork(
                             "oem_import_$callId",
-                            ExistingWorkPolicy.REPLACE,
+                            ExistingWorkPolicy.KEEP,
                             workRequest
                         )
                         pendingResult.finish()
@@ -185,7 +186,7 @@ class CallStateReceiver : BroadcastReceiver() {
 
                         WorkManager.getInstance(context).enqueueUniqueWork(
                             "oem_import_$callId",
-                            ExistingWorkPolicy.REPLACE,
+                            ExistingWorkPolicy.KEEP,
                             workRequest
                         )
                         pendingResult.finish()

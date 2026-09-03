@@ -51,13 +51,36 @@ class OemPermissionManagerTest {
 
     @Test
     fun evaluatePermissionState_whenDeniedWithoutRationaleAfterPreviousRequest_returnsPermanentlyDenied() {
-        // User clicked "Don't ask again" or OS blocked further dialogs:
-        // hasPermission = false, hasRequestedBefore = true, shouldShowRationale = false
         val state = OemPermissionManager.evaluatePermissionState(
             hasPermission = false,
             hasRequestedBefore = true,
             shouldShowRationale = false
         )
         assertThat(state).isEqualTo(OemPermissionState.PERMANENTLY_DENIED)
+    }
+
+    @Test
+    fun evaluatePermissionState_whenKnownPermanentlyDenied_retainsPermanentDenialEvenWithoutRationale() {
+        // P1-PREFLIGHT-26: When rationale information is temporarily unavailable (shouldShowRationale = null),
+        // a known permanent denial MUST NOT be downgraded to ordinary DENIED.
+        val state = OemPermissionManager.evaluatePermissionState(
+            hasPermission = false,
+            hasRequestedBefore = true,
+            shouldShowRationale = null,
+            isKnownPermanentlyDenied = true
+        )
+        assertThat(state).isEqualTo(OemPermissionState.PERMANENTLY_DENIED)
+    }
+
+    @Test
+    fun evaluatePermissionState_whenPermissionIsGranted_clearsPermanentDenial() {
+        // P1-PREFLIGHT-26: Returning from Settings with permission granted immediately upgrades to GRANTED
+        val state = OemPermissionManager.evaluatePermissionState(
+            hasPermission = true,
+            hasRequestedBefore = true,
+            shouldShowRationale = null,
+            isKnownPermanentlyDenied = true
+        )
+        assertThat(state).isEqualTo(OemPermissionState.GRANTED)
     }
 }

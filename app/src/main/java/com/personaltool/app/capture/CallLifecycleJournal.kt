@@ -10,9 +10,8 @@ import com.personaltool.core.model.call.CallDirection
 import com.personaltool.core.model.call.CallSession
 import com.personaltool.core.model.call.RecordingQuality
 import com.personaltool.core.storage.entity.CallEntity
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 enum class PersistedCallState {
@@ -85,9 +84,17 @@ object CallLifecycleJournal {
         }
     }
 
+    /**
+     * Records IDLE transition.
+     * Idempotency Invariant (P1-PREFLIGHT-25):
+     * If entry is already ENDED_IMPORT_PENDING, the first recorded endTimeMs is preserved and not overwritten.
+     */
     @Synchronized
     fun recordIdle(context: Context, endTimeMs: Long): ActiveCallLifecycleEntry? {
         val active = getActiveEntry(context) ?: return null
+        if (active.lifecycleState == PersistedCallState.ENDED_IMPORT_PENDING) {
+            return active
+        }
         val updated = active.copy(
             lifecycleState = PersistedCallState.ENDED_IMPORT_PENDING,
             callEndTimeMs = endTimeMs
@@ -117,32 +124,33 @@ object CallLifecycleJournal {
     }
 
     /**
-     * Reconciles persisted call journals upon application startup or process recreation.
-     * Truthful Reconciliation Invariants:
-     * 1. OFFHOOK_ACTIVE is NOT prematurely converted to UNSUPPORTED/deleted unless age >= STALE_CALL_THRESHOLD_MS.
-     * 2. ENDED_IMPORT_PENDING idempotently re-enqueues the WorkManager import worker.
-     * 3. Truly stale sessions (>= 4h) are logged as truthful UNSUPPORTED metadata records without fabricating audio.
+     * Reconciles persisted call journals upon application startup.
+     * Invariants:
+     * - OFFHOOK_ACTIVE: Kept intact if age < 4h (call may still be ongoing).
+     * - Truly stale sessions: Recorded with durationMs = 0 (unknown duration) and explicit diagnostic (P1-PREFLIGHT-22).
+     * - Durable persistence: Journal file is ONLY deleted after Room DB insert transaction completes (P1-PREFLIGHT-23).
+     * - ENDED_IMPORT_PENDING: Idempotently re-ensures WorkManager task is scheduled (P1-PREFLIGHT-25).
      */
-    @Synchronized
-    fun reconcileOnStartup(context: Context) {
+    suspend fun reconcileOnStartup(context: Context) = withContext(Dispatchers.IO) {
         val file = getJournalFile(context)
-        if (!file.exists()) return
+        if (!file.exists()) return@withContext
 
-        val text = runCatching { file.readText() }.getOrNull() ?: return
+        val text = runCatching { file.readText() }.getOrNull() ?: return@withContext
         val entry = ActiveCallLifecycleEntry.fromSerializedString(text) ?: run {
             file.delete()
-            return
+            return@withContext
         }
 
         when (entry.lifecycleState) {
             PersistedCallState.OFFHOOK_ACTIVE -> {
-                val ageMs = System.currentTimeMillis() - entry.callStartTimeMs
+                val now = System.currentTimeMillis()
+                val ageMs = now - entry.callStartTimeMs
                 if (ageMs < STALE_CALL_THRESHOLD_MS) {
                     // Call may still be in-progress on the telephony line! Keep journal for subsequent IDLE broadcast.
-                    return
+                    return@withContext
                 }
 
-                // Truly stale abandoned call (e.g. device rebooted hours ago)
+                // Truly stale abandoned call where termination was not observed
                 val app = context.applicationContext as? PersonalToolApplication
                 val dao = app?.database?.callDao()
                 val session = CallSession(
@@ -150,19 +158,22 @@ object CallLifecycleJournal {
                     phoneNumber = entry.phoneNumber,
                     direction = if (entry.isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING,
                     startTimeEpochMs = entry.callStartTimeMs,
-                    endTimeEpochMs = entry.callStartTimeMs + STALE_CALL_THRESHOLD_MS,
-                    durationMs = STALE_CALL_THRESHOLD_MS,
+                    endTimeEpochMs = entry.callStartTimeMs,
+                    durationMs = 0L, // P1-PREFLIGHT-22: Never fabricate 4h duration; duration is unknown
                     recordingQuality = RecordingQuality.UNSUPPORTED,
                     captureTier = entry.capturePathCandidate,
-                    unrecordedReason = "Call session timed out after 4 hours without receiving telephony termination event."
+                    unrecordedReason = "Call session timed out; telephony termination event was not observed. Actual duration is unknown."
                 )
 
                 if (dao != null) {
-                    CoroutineScope(Dispatchers.IO).launch {
+                    try {
                         dao.insertCall(CallEntity.fromDomain(session))
+                        // P1-PREFLIGHT-23: Delete journal only after DB write succeeds
+                        file.delete()
+                    } catch (_: Exception) {
+                        // Keep journal if DB persistence failed so it remains recoverable
                     }
                 }
-                file.delete()
             }
 
             PersistedCallState.ENDED_IMPORT_PENDING -> {

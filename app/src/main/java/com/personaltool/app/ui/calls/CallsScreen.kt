@@ -30,13 +30,17 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.personaltool.app.capture.OemDiscoveryState
 import com.personaltool.app.capture.OemPermissionManager
 import com.personaltool.app.capture.OemPermissionState
@@ -64,12 +68,26 @@ fun CallsScreen(
     val typography = IndustrialTheme.typography
     val context = LocalContext.current
     val activity = context as? Activity
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val callsList by viewModel.calls.collectAsState()
     val recordingState by viewModel.recordingState.collectAsState()
     val playerState by viewModel.playerState.collectAsState()
     val capability by viewModel.hardwareCapability.collectAsState()
     val permissionState by viewModel.permissionState.collectAsState()
+
+    // Refresh permission and capability state whenever user returns to foreground (e.g. from Android Settings)
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshCapability()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -79,7 +97,7 @@ fun CallsScreen(
                 activity,
                 OemPermissionManager.getRequiredPermission()
             )
-        } else true
+        } else false
         viewModel.onPermissionResult(isGranted, shouldShowRationale)
     }
 
@@ -138,7 +156,7 @@ fun CallsScreen(
                         color = colors.danger
                     )
                     Text(
-                        text = "Permission blocked — enable Audio access in Android Settings to ingest OEM dialer recordings.",
+                        text = "Permission blocked - enable Audio access in Android Settings to ingest OEM dialer recordings.",
                         style = typography.bodyMedium,
                         color = colors.textSecondary
                     )

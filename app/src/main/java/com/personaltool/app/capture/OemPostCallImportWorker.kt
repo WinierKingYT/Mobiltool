@@ -54,7 +54,7 @@ class OemPostCallImportWorker(
         val startTimeMs = inputData.getLong(KEY_START_TIME, 0L)
         val endTimeMs = inputData.getLong(KEY_END_TIME, System.currentTimeMillis())
         val direction = if (isIncoming) CallDirection.INCOMING else CallDirection.OUTGOING
-        val durationMs = (endTimeMs - startTimeMs).coerceAtLeast(0L)
+        val fallbackDurationMs = (endTimeMs - startTimeMs).coerceAtLeast(0L)
 
         val app = applicationContext as? PersonalToolApplication
         val dao = app?.database?.callDao() ?: return Result.retry()
@@ -84,17 +84,34 @@ class OemPostCallImportWorker(
                     isPhysicallyQualified = capability.isBidirectionalQualified
                 )
 
+                // P1-PREFLIGHT-24: Truthful Audio Quality Mapping
+                val (finalQuality, validAudioPath, finalDurationMs, unrecordedReason) = if (inspection.isValid) {
+                    val quality = if (capability.isBidirectionalQualified) {
+                        RecordingQuality.VERIFIED_BIDIRECTIONAL
+                    } else {
+                        RecordingQuality.MIXED_UNVERIFIED
+                    }
+                    val duration = if (inspection.durationMs > 0L) inspection.durationMs else fallbackDurationMs
+                    Quad(quality, file.absolutePath, duration, null)
+                } else {
+                    // Invalid/corrupt, silent, or unreadable: fail-closed, do not expose as valid playable audio
+                    val quality = inspection.determinedQuality // CORRUPT or SILENT
+                    val reason = "Audio Inspection Failed: ${inspection.rejectionReason ?: "Invalid audio container or decoding failure"}"
+                    Quad(quality, null, 0L, reason)
+                }
+
                 val session = CallSession(
                     id = callId,
                     phoneNumber = phoneNumber,
                     direction = direction,
                     startTimeEpochMs = startTimeMs,
                     endTimeEpochMs = endTimeMs,
-                    durationMs = if (inspection.isValid) inspection.durationMs else durationMs,
-                    recordingQuality = if (inspection.isValid) inspection.determinedQuality else RecordingQuality.MIXED_UNVERIFIED,
+                    durationMs = finalDurationMs,
+                    recordingQuality = finalQuality,
                     captureTier = CallCaptureTier.OEM_IMPORT,
-                    audioFilePath = file.absolutePath,
-                    fileSizeBytes = importResult.fileSize
+                    audioFilePath = validAudioPath,
+                    fileSizeBytes = if (inspection.isValid) importResult.fileSize else 0L,
+                    unrecordedReason = unrecordedReason
                 )
                 dao.insertCall(CallEntity.fromDomain(session))
             }
@@ -106,7 +123,7 @@ class OemPostCallImportWorker(
                     direction = direction,
                     startTimeEpochMs = startTimeMs,
                     endTimeEpochMs = endTimeMs,
-                    durationMs = durationMs,
+                    durationMs = fallbackDurationMs,
                     recordingQuality = RecordingQuality.UNSUPPORTED,
                     captureTier = CallCaptureTier.OEM_IMPORT,
                     unrecordedReason = "OEM Ingestion: ${importResult.diagnosticReason}"
@@ -121,7 +138,7 @@ class OemPostCallImportWorker(
                     direction = direction,
                     startTimeEpochMs = startTimeMs,
                     endTimeEpochMs = endTimeMs,
-                    durationMs = durationMs,
+                    durationMs = fallbackDurationMs,
                     recordingQuality = RecordingQuality.UNSUPPORTED,
                     captureTier = CallCaptureTier.OEM_IMPORT,
                     unrecordedReason = "OEM Collision Safety: ${importResult.diagnosticReason}"
@@ -134,3 +151,5 @@ class OemPostCallImportWorker(
         return Result.success()
     }
 }
+
+private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
