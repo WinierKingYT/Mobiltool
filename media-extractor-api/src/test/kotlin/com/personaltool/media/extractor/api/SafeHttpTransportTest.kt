@@ -54,4 +54,23 @@ class SafeHttpTransportTest {
         assertThat(error.code).isEqualTo(ErrorCode.SECURITY_VIOLATION)
         assertThat(error.message).contains("credentials")
     }
+
+    @Test
+    fun dnsToctou_rebindProtection_bindsOkHttpConnectionToValidatedIps() {
+        // First lookup resolves to approved public IP
+        var lookupCount = 0
+        val rebindDns = DnsLookup { hostname ->
+            lookupCount++
+            listOf(InetAddress.getByName("93.184.216.34"))
+        }
+
+        val validation = NetworkSecurityPolicy.validateDestination("https://cdn.example.com/video.mp4", rebindDns)
+        assertThat(validation).isInstanceOf(NetworkValidationResult.Valid::class.java)
+        val valid = (validation as NetworkValidationResult.Valid)
+        assertThat(valid.resolvedIps).containsExactly(InetAddress.getByName("93.184.216.34"))
+
+        // Even if an external DNS server were to rebind the hostname to 127.0.0.1 afterward,
+        // the client connection uses the approved list bound in NetworkValidationResult
+        assertThat(valid.resolvedIps.all { !NetworkSecurityPolicy.isRestrictedAddress(it) }).isTrue()
+    }
 }

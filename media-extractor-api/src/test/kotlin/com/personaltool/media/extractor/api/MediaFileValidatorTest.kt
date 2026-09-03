@@ -4,7 +4,6 @@ import com.google.common.truth.Truth.assertThat
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
-import java.io.File
 import java.io.FileOutputStream
 
 class MediaFileValidatorTest {
@@ -13,20 +12,57 @@ class MediaFileValidatorTest {
     val tempFolder = TemporaryFolder()
 
     @Test
-    fun validMp4File_passesValidation_andReturnsCorrectMimeAndHash() {
+    fun validMp4File_passesCanonicalValidation() {
         val file = tempFolder.newFile("sample.mp4")
         FileOutputStream(file).use { fos ->
-            val header = byteArrayOf(0x00, 0x00, 0x00, 0x20, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte())
+            val header = byteArrayOf(0x00, 0x00, 0x00, 0x20, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte(), 'i'.code.toByte(), 's'.code.toByte(), 'o'.code.toByte(), 'm'.code.toByte())
             fos.write(header)
             fos.write(ByteArray(2048) { 0x55 })
         }
 
-        val result = MediaFileValidator.validateFile(file)
+        val result = MediaFileValidator.validateFile(file, context = ValidationContext.CANONICAL_MEDIA)
         assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
         val valid = result as FileValidationResult.Valid
+        assertThat(valid.containerType).isEqualTo(DetectedContainer.MP4_ISO_BMFF)
         assertThat(valid.detectedMimeType).isEqualTo("video/mp4")
-        assertThat(valid.fileSizeBytes).isEqualTo(2056L)
+        assertThat(valid.fileSizeBytes).isEqualTo(2060L)
         assertThat(valid.sha256Hex).isNotEmpty()
+    }
+
+    @Test
+    fun m4aAudioMajorBrand_isDetectedAsAudioMp4() {
+        val file = tempFolder.newFile("song.m4a")
+        FileOutputStream(file).use { fos ->
+            val header = byteArrayOf(0x00, 0x00, 0x00, 0x20, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte(), 'M'.code.toByte(), '4'.code.toByte(), 'A'.code.toByte(), ' '.code.toByte())
+            fos.write(header)
+            fos.write(ByteArray(2048) { 0x44 })
+        }
+
+        val result = MediaFileValidator.validateFile(file, context = ValidationContext.CANONICAL_MEDIA)
+        assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
+        val valid = result as FileValidationResult.Valid
+        assertThat(valid.containerType).isEqualTo(DetectedContainer.MP4_ISO_BMFF)
+        assertThat(valid.detectedMimeType).isEqualTo("audio/mp4")
+    }
+
+    @Test
+    fun stagingPartFile_passesStagingValidation_butFailsCanonicalValidation() {
+        val file = tempFolder.newFile("download_stream.mp4.part")
+        FileOutputStream(file).use { fos ->
+            val header = byteArrayOf(0x00, 0x00, 0x00, 0x20, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte(), 'i'.code.toByte(), 's'.code.toByte(), 'o'.code.toByte(), 'm'.code.toByte())
+            fos.write(header)
+            fos.write(ByteArray(2048) { 0x55 })
+        }
+
+        // 1. In STAGING_PAYLOAD phase: Must PASS
+        val stagingResult = MediaFileValidator.validateFile(file, context = ValidationContext.STAGING_PAYLOAD)
+        assertThat(stagingResult).isInstanceOf(FileValidationResult.Valid::class.java)
+
+        // 2. In CANONICAL_MEDIA phase: Must FAIL (P2-DIRECT-FIX-01 Invariant)
+        val canonicalResult = MediaFileValidator.validateFile(file, context = ValidationContext.CANONICAL_MEDIA)
+        assertThat(canonicalResult).isInstanceOf(FileValidationResult.Invalid::class.java)
+        val invalid = canonicalResult as FileValidationResult.Invalid
+        assertThat(invalid.reason).contains("uncommitted temporary or *.part artifact")
     }
 
     @Test
@@ -35,12 +71,14 @@ class MediaFileValidatorTest {
         FileOutputStream(file).use { fos ->
             val header = byteArrayOf(0x1A.toByte(), 0x45.toByte(), 0xDF.toByte(), 0xA3.toByte())
             fos.write(header)
+            fos.write("...webm...".toByteArray(Charsets.ISO_8859_1))
             fos.write(ByteArray(2048) { 0x33 })
         }
 
-        val result = MediaFileValidator.validateFile(file)
+        val result = MediaFileValidator.validateFile(file, context = ValidationContext.CANONICAL_MEDIA)
         assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
         val valid = result as FileValidationResult.Valid
+        assertThat(valid.containerType).isEqualTo(DetectedContainer.MATROSKA_WEBM)
         assertThat(valid.detectedMimeType).isEqualTo("video/webm")
     }
 
@@ -53,10 +91,40 @@ class MediaFileValidatorTest {
             fos.write(ByteArray(2048) { 0x11 })
         }
 
-        val result = MediaFileValidator.validateFile(file)
+        val result = MediaFileValidator.validateFile(file, context = ValidationContext.CANONICAL_MEDIA)
         assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
         val valid = result as FileValidationResult.Valid
+        assertThat(valid.containerType).isEqualTo(DetectedContainer.MP3)
         assertThat(valid.detectedMimeType).isEqualTo("audio/mpeg")
+    }
+
+    @Test
+    fun validMpegTs_withMultiPacketSync_passesValidation() {
+        val file = tempFolder.newFile("stream.ts")
+        val data = ByteArray(188 * 12) { 0x00 } // > 1024 bytes
+        // Set sync byte 0x47 every 188 bytes
+        for (i in 0 until 12) {
+            data[i * 188] = 0x47
+        }
+
+        FileOutputStream(file).use { fos -> fos.write(data) }
+
+        val result = MediaFileValidator.validateFile(file, context = ValidationContext.CANONICAL_MEDIA)
+        assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
+        val valid = result as FileValidationResult.Valid
+        assertThat(valid.containerType).isEqualTo(DetectedContainer.MPEG_TS)
+        assertThat(valid.detectedMimeType).isEqualTo("video/mp2t")
+    }
+
+    @Test
+    fun invalidMpegTs_withSingleSyncByteOnly_isRejected() {
+        val file = tempFolder.newFile("random.ts")
+        val data = ByteArray(2048) { 0x00 }
+        data[0] = 0x47 // only first byte is 0x47
+        FileOutputStream(file).use { fos -> fos.write(data) }
+
+        val result = MediaFileValidator.validateFile(file, context = ValidationContext.CANONICAL_MEDIA)
+        assertThat(result).isInstanceOf(FileValidationResult.Invalid::class.java)
     }
 
     @Test
@@ -98,18 +166,5 @@ class MediaFileValidatorTest {
         assertThat(result).isInstanceOf(FileValidationResult.Invalid::class.java)
         val invalid = result as FileValidationResult.Invalid
         assertThat(invalid.reason).contains("JSON error")
-    }
-
-    @Test
-    fun partTemporaryFile_isRejected() {
-        val file = tempFolder.newFile("sample.mp4.part")
-        FileOutputStream(file).use { fos ->
-            fos.write(ByteArray(2048) { 0x22 })
-        }
-
-        val result = MediaFileValidator.validateFile(file)
-        assertThat(result).isInstanceOf(FileValidationResult.Invalid::class.java)
-        val invalid = result as FileValidationResult.Invalid
-        assertThat(invalid.reason).contains("temporary/part artifact")
     }
 }

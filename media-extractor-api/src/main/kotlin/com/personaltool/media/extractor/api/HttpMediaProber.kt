@@ -16,10 +16,11 @@ object HttpMediaProber {
 
     fun probeDirectMediaUrl(
         urlString: String,
-        dnsLookup: DnsLookup = SystemDnsLookup
+        dnsLookup: DnsLookup = SystemDnsLookup,
+        transportEngine: SafeHttpTransportEngine = SafeHttpTransport
     ): AppResult<HttpProbeResult> {
         // 1. Initial HEAD probe
-        val headResult = SafeHttpTransport.openSafeConnection(
+        val headResult = transportEngine.openSafeConnection(
             initialUrl = urlString,
             method = "HEAD",
             dnsLookup = dnsLookup
@@ -31,12 +32,12 @@ object HttpMediaProber {
                 try {
                     val code = response.responseCode
                     if (code in 200..299) {
-                        val conn = response.connection
-                        val contentLength = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
-                        val contentType = conn.contentType
-                        val acceptRanges = conn.getHeaderField("Accept-Ranges")
+                        val okResponse = response.response
+                        val contentLength = response.contentLength
+                        val contentType = response.contentType
+                        val acceptRanges = okResponse?.header("Accept-Ranges")
                         val isRangeSupported = acceptRanges?.equals("bytes", ignoreCase = true) == true
-                        val contentDisposition = conn.getHeaderField("Content-Disposition")
+                        val contentDisposition = okResponse?.header("Content-Disposition")
                         val suggestedFileName = extractFileName(response.finalUrl, contentDisposition, contentType)
 
                         return AppResult.Success(
@@ -63,7 +64,7 @@ object HttpMediaProber {
         }
 
         // 2. Bounded GET fallback with Range: bytes=0-4095 if HEAD was rejected or unsupported
-        val getResult = SafeHttpTransport.openSafeConnection(
+        val getResult = transportEngine.openSafeConnection(
             initialUrl = urlString,
             method = "GET",
             headers = mapOf("Range" to "bytes=0-4095"),
@@ -82,9 +83,9 @@ object HttpMediaProber {
                         )
                     }
 
-                    val conn = response.connection
-                    var contentLength = conn.getHeaderField("Content-Length")?.toLongOrNull() ?: -1L
-                    val contentRange = conn.getHeaderField("Content-Range")
+                    val okResponse = response.response
+                    var contentLength = response.contentLength
+                    val contentRange = okResponse?.header("Content-Range")
                     val isRangeSupported = code == 206 || contentRange != null
 
                     // If Content-Range is present (e.g. "bytes 0-4095/10485760"), extract total length
@@ -96,13 +97,13 @@ object HttpMediaProber {
                         }
                     }
 
-                    val contentType = conn.contentType
-                    val contentDisposition = conn.getHeaderField("Content-Disposition")
+                    val contentType = response.contentType
+                    val contentDisposition = okResponse?.header("Content-Disposition")
                     val suggestedFileName = extractFileName(response.finalUrl, contentDisposition, contentType)
 
                     // Read bounded prefix and discard
                     runCatching {
-                        conn.inputStream.use { stream ->
+                        response.responseBodyStream.use { stream ->
                             val buffer = ByteArray(4096)
                             stream.read(buffer)
                         }

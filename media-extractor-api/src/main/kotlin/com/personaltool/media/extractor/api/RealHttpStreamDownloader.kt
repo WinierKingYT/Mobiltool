@@ -2,173 +2,245 @@ package com.personaltool.media.extractor.api
 
 import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.common.result.ErrorCode
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
-import java.net.HttpURLConnection
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.ConcurrentHashMap
+
+enum class DestinationCollisionPolicy {
+    FAIL_IF_EXISTS,
+    OVERWRITE_CRASH_SAFE
+}
 
 data class DownloadedFileInfo(
     val file: File,
     val fileSizeBytes: Long,
     val sha256Hex: String,
+    val containerType: DetectedContainer,
     val detectedMimeType: String
 )
 
 class RealHttpStreamDownloader(
-    private val connectTimeoutMs: Int = SafeHttpTransport.DEFAULT_CONNECT_TIMEOUT_MS,
-    private val readTimeoutMs: Int = SafeHttpTransport.DEFAULT_READ_TIMEOUT_MS,
-    private val bufferSizeBytes: Int = 32768, // 32KB buffer
-    private val dnsLookup: DnsLookup = SystemDnsLookup
+    private val dnsLookup: DnsLookup = SystemDnsLookup,
+    private val transportEngine: SafeHttpTransportEngine = SafeHttpTransport
 ) {
 
-    private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
+    private val activeDownloads = ConcurrentHashMap<String, Boolean>()
 
     suspend fun download(
         downloadId: String,
         sourceUrl: String,
         destinationFile: File,
+        collisionPolicy: DestinationCollisionPolicy = DestinationCollisionPolicy.FAIL_IF_EXISTS,
         onProgress: (DownloadProgress) -> Unit
     ): AppResult<DownloadedFileInfo> = withContext(Dispatchers.IO) {
-        destinationFile.parentFile?.mkdirs()
-        val partFile = File(destinationFile.parentFile, "${destinationFile.name}.part")
+        activeDownloads[downloadId] = true
 
-        // Clean up any stale partial files from prior aborted attempts
-        if (partFile.exists()) {
-            partFile.delete()
+        // 1. Collision and directory check
+        val parentDir = destinationFile.parentFile ?: File(".")
+        if (!parentDir.exists()) {
+            parentDir.mkdirs()
         }
 
-        val transportResult = SafeHttpTransport.openSafeConnection(
+        if (destinationFile.exists() && collisionPolicy == DestinationCollisionPolicy.FAIL_IF_EXISTS) {
+            return@withContext AppResult.Error(
+                message = "Destination file already exists and collision policy is FAIL_IF_EXISTS: ${destinationFile.name}",
+                code = ErrorCode.STORAGE_ERROR
+            )
+        }
+
+        // Staging file in same directory for same-filesystem atomic commit
+        val stagingPartFile = File(parentDir, "${destinationFile.name}.part")
+        if (stagingPartFile.exists()) {
+            stagingPartFile.delete()
+        }
+
+        // 2. Open verified and DNS-bound connection
+        val connResult = transportEngine.openSafeConnection(
             initialUrl = sourceUrl,
             method = "GET",
-            connectTimeoutMs = connectTimeoutMs,
-            readTimeoutMs = readTimeoutMs,
             dnsLookup = dnsLookup
         )
 
-        val response = when (transportResult) {
-            is AppResult.Success -> transportResult.data
-            is AppResult.Error -> return@withContext transportResult
+        val safeResponse = when (connResult) {
+            is AppResult.Success -> connResult.data
+            is AppResult.Error -> return@withContext connResult
             AppResult.Loading -> return@withContext AppResult.Loading
         }
 
-        try {
-            val conn = response.connection
-            activeConnections[downloadId] = conn
+        var bytesDownloaded = 0L
+        val expectedContentLength = safeResponse.contentLength
+        val startTime = System.currentTimeMillis()
+        var wasCancelled = false
 
-            val code = response.responseCode
-            if (code !in 200..299) {
+        try {
+            val responseCode = safeResponse.responseCode
+            if (responseCode !in 200..299) {
+                stagingPartFile.delete()
                 return@withContext AppResult.Error(
-                    message = "Server returned HTTP $code (${conn.responseMessage})",
+                    message = "Server returned HTTP $responseCode for stream download",
                     code = ErrorCode.NETWORK_ERROR
                 )
             }
 
-            val totalBytes = conn.contentLengthLong.takeIf { it > 0 } ?: -1L
-            var bytesDownloaded = 0L
-            var lastProgressTime = System.currentTimeMillis()
-            var bytesSinceLastProgress = 0L
+            safeResponse.use { resp ->
+                resp.responseBodyStream.use { input ->
+                    FileOutputStream(stagingPartFile).use { output ->
+                        val buffer = ByteArray(32768) // 32KB bounded memory buffer
+                        var bytesRead: Int
+                        var lastProgressPercent = -1
 
-            conn.inputStream.use { input ->
-                FileOutputStream(partFile, false).use { output ->
-                    val buffer = ByteArray(bufferSizeBytes)
-                    var read: Int
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            if (activeDownloads[downloadId] == false) {
+                                wasCancelled = true
+                                break
+                            }
 
-                    while (input.read(buffer).also { read = it } != -1) {
-                        if (!coroutineContext.isActive) {
-                            throw CancellationException("Download cancelled by coroutine context")
-                        }
+                            output.write(buffer, 0, bytesRead)
+                            bytesDownloaded += bytesRead
 
-                        output.write(buffer, 0, read)
-                        bytesDownloaded += read
-                        bytesSinceLastProgress += read
+                            val percent = if (expectedContentLength > 0L) {
+                                ((bytesDownloaded * 100) / expectedContentLength).toInt().coerceIn(0, 99)
+                            } else {
+                                -1
+                            }
 
-                        val now = System.currentTimeMillis()
-                        val timeDiff = now - lastProgressTime
-                        if (timeDiff >= 200 || (totalBytes > 0 && bytesDownloaded == totalBytes)) {
-                            val speed = if (timeDiff > 0) (bytesSinceLastProgress * 1000L) / timeDiff else 0L
-                            val percent = if (totalBytes > 0) ((bytesDownloaded * 100) / totalBytes).toInt().coerceIn(0, 100) else 0
-
-                            onProgress(
-                                DownloadProgress(
-                                    downloadId = downloadId,
-                                    bytesDownloaded = bytesDownloaded,
-                                    totalBytes = totalBytes,
-                                    percent = percent,
-                                    speedBytesPerSec = speed
+                            if (percent != lastProgressPercent) {
+                                lastProgressPercent = percent
+                                val elapsedSec = ((System.currentTimeMillis() - startTime) / 1000.0).coerceAtLeast(0.001)
+                                val speedBps = (bytesDownloaded / elapsedSec).toLong()
+                                onProgress(
+                                    DownloadProgress(
+                                        downloadId = downloadId,
+                                        bytesDownloaded = bytesDownloaded,
+                                        totalBytes = expectedContentLength,
+                                        percent = percent,
+                                        speedBytesPerSec = speedBps
+                                    )
                                 )
-                            )
-
-                            lastProgressTime = now
-                            bytesSinceLastProgress = 0L
+                            }
                         }
+                        output.flush()
                     }
-                    output.flush()
                 }
             }
 
-            if (bytesDownloaded == 0L) {
-                partFile.delete()
-                return@withContext AppResult.Error("Download finished with 0 bytes received", code = ErrorCode.EXTRACTION_FAILED)
+            if (wasCancelled) {
+                stagingPartFile.delete()
+                return@withContext AppResult.Error(
+                    message = "Download cancelled by user",
+                    code = ErrorCode.NETWORK_ERROR
+                )
             }
 
-            // P2 Invariant: FILE VALIDATION + HASH before final destination commit
-            val validation = MediaFileValidator.validateFile(partFile)
-            if (validation is FileValidationResult.Invalid) {
-                partFile.delete()
+            // 3. Response Completeness Check (P2-DIRECT-FIX-04)
+            if (expectedContentLength > 0L && bytesDownloaded != expectedContentLength) {
+                stagingPartFile.delete()
                 return@withContext AppResult.Error(
-                    message = "Downloaded file validation failed: ${validation.reason}",
+                    message = "Premature EOF: expected $expectedContentLength bytes but received $bytesDownloaded bytes",
+                    code = ErrorCode.NETWORK_ERROR
+                )
+            }
+
+            if (bytesDownloaded == 0L) {
+                stagingPartFile.delete()
+                return@withContext AppResult.Error(
+                    message = "Downloaded 0 bytes (empty response payload)",
+                    code = ErrorCode.NETWORK_ERROR
+                )
+            }
+
+            // 4. Content Validation on Staging File (P2-DIRECT-FIX-01 & P2-DIRECT-FIX-05)
+            val stagingValidation = MediaFileValidator.validateFile(
+                stagingPartFile,
+                context = ValidationContext.STAGING_PAYLOAD
+            )
+
+            val validResult = when (stagingValidation) {
+                is FileValidationResult.Valid -> stagingValidation
+                is FileValidationResult.Invalid -> {
+                    stagingPartFile.delete()
+                    return@withContext AppResult.Error(
+                        message = "Downloaded stream validation failed: ${stagingValidation.reason}",
+                        code = ErrorCode.VALIDATION_ERROR
+                    )
+                }
+            }
+
+            // 5. True Crash-Safe Commit (P2-DIRECT-FIX-02)
+            // Sequence: VALID STAGING -> FINALIZATION PREP -> ATOMIC COMMIT -> CANONICAL FILE VISIBLE
+            val moveOptions = if (collisionPolicy == DestinationCollisionPolicy.OVERWRITE_CRASH_SAFE) {
+                arrayOf(StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } else {
+                arrayOf(StandardCopyOption.ATOMIC_MOVE)
+            }
+
+            val commitSuccess = try {
+                Files.move(stagingPartFile.toPath(), destinationFile.toPath(), *moveOptions)
+                true
+            } catch (e: Exception) {
+                // Fallback to renameTo if Files.move ATOMIC_MOVE fails
+                stagingPartFile.renameTo(destinationFile)
+            }
+
+            if (!commitSuccess || !destinationFile.exists()) {
+                // Fail closed: Never perform a non-atomic in-place copy to canonical path.
+                return@withContext AppResult.Error(
+                    message = "Atomic commit to canonical destination failed; staging file preserved at ${stagingPartFile.name}",
+                    code = ErrorCode.STORAGE_ERROR
+                )
+            }
+
+            // 6. Verify Canonical File Lifecycle
+            val canonicalValidation = MediaFileValidator.validateFile(
+                destinationFile,
+                context = ValidationContext.CANONICAL_MEDIA
+            )
+
+            if (canonicalValidation is FileValidationResult.Invalid) {
+                destinationFile.delete()
+                return@withContext AppResult.Error(
+                    message = "Canonical media verification failed: ${canonicalValidation.reason}",
                     code = ErrorCode.VALIDATION_ERROR
                 )
             }
 
-            val validResult = validation as FileValidationResult.Valid
-
-            // Crash-safe commit: rename or verified hash copy
-            if (destinationFile.exists()) {
-                destinationFile.delete()
-            }
-
-            val renameSuccess = partFile.renameTo(destinationFile)
-            if (!renameSuccess) {
-                partFile.copyTo(destinationFile, overwrite = true)
-                val destinationSha = MediaFileValidator.calculateSha256(destinationFile)
-                if (destinationSha != validResult.sha256Hex) {
-                    destinationFile.delete()
-                    partFile.delete()
-                    return@withContext AppResult.Error(
-                        message = "Crash-safe commit hash mismatch between staging and canonical destination",
-                        code = ErrorCode.STORAGE_ERROR
-                    )
-                }
-                partFile.delete()
-            }
+            onProgress(
+                DownloadProgress(
+                    downloadId = downloadId,
+                    bytesDownloaded = bytesDownloaded,
+                    totalBytes = bytesDownloaded,
+                    percent = 100,
+                    speedBytesPerSec = 0L
+                )
+            )
 
             AppResult.Success(
                 DownloadedFileInfo(
                     file = destinationFile,
                     fileSizeBytes = validResult.fileSizeBytes,
                     sha256Hex = validResult.sha256Hex,
+                    containerType = validResult.containerType,
                     detectedMimeType = validResult.detectedMimeType
                 )
             )
-        } catch (e: CancellationException) {
-            partFile.delete()
-            AppResult.Error("Download cancelled: ${e.message}", code = ErrorCode.UNKNOWN)
+
         } catch (e: Exception) {
-            partFile.delete()
-            AppResult.Error("Download failed: ${e.message}", code = ErrorCode.NETWORK_ERROR)
+            stagingPartFile.delete()
+            AppResult.Error(
+                message = "Download stream failed: ${e.message}",
+                cause = e,
+                code = ErrorCode.NETWORK_ERROR
+            )
         } finally {
-            activeConnections.remove(downloadId)
-            response.close()
+            activeDownloads.remove(downloadId)
         }
     }
 
     fun cancel(downloadId: String) {
-        val conn = activeConnections.remove(downloadId)
-        conn?.disconnect()
+        activeDownloads[downloadId] = false
     }
 }

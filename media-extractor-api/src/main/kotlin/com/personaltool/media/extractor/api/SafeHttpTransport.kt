@@ -2,46 +2,70 @@ package com.personaltool.media.extractor.api
 
 import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.common.result.ErrorCode
+import okhttp3.Dns
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
 import java.io.Closeable
-import java.net.HttpURLConnection
+import java.io.InputStream
+import java.net.InetAddress
 import java.net.URI
+import java.util.concurrent.TimeUnit
 
 data class SafeHttpResponse(
-    val connection: HttpURLConnection,
+    val response: Response?,
+    val responseBodyStream: InputStream,
+    val contentLength: Long,
+    val contentType: String?,
     val finalUrl: String,
     val responseCode: Int,
     val redirectCount: Int
 ) : Closeable {
     override fun close() {
-        runCatching { connection.disconnect() }
+        runCatching { responseBodyStream.close() }
+        runCatching { response?.close() }
     }
 }
 
-object SafeHttpTransport {
-
-    const val DEFAULT_MAX_REDIRECTS = 5
-    const val DEFAULT_CONNECT_TIMEOUT_MS = 10000
-    const val DEFAULT_READ_TIMEOUT_MS = 15000
-
-    /**
-     * Executes an HTTP request while manually inspecting and re-validating every redirect hop.
-     * Prevents SSRF redirection attacks, redirect cycles, and HTTPS -> HTTP downgrades.
-     */
+interface SafeHttpTransportEngine {
     fun openSafeConnection(
         initialUrl: String,
         method: String = "GET",
         headers: Map<String, String> = emptyMap(),
-        maxRedirects: Int = DEFAULT_MAX_REDIRECTS,
-        connectTimeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
-        readTimeoutMs: Int = DEFAULT_READ_TIMEOUT_MS,
+        maxRedirects: Int = SafeHttpTransport.DEFAULT_MAX_REDIRECTS,
+        connectTimeoutMs: Long = SafeHttpTransport.DEFAULT_CONNECT_TIMEOUT_MS,
+        readTimeoutMs: Long = SafeHttpTransport.DEFAULT_READ_TIMEOUT_MS,
         dnsLookup: DnsLookup = SystemDnsLookup
+    ): AppResult<SafeHttpResponse>
+}
+
+object SafeHttpTransport : SafeHttpTransportEngine {
+
+    const val DEFAULT_MAX_REDIRECTS = 5
+    const val DEFAULT_CONNECT_TIMEOUT_MS = 10000L
+    const val DEFAULT_READ_TIMEOUT_MS = 15000L
+
+    /**
+     * Executes an HTTP request with:
+     * 1. Pre-connection DNS validation against SSRF / private IP policies.
+     * 2. Strict DNS binding to the pre-validated IP address set (eliminating DNS TOCTOU / Rebinding attacks).
+     * 3. Manual hop-by-hop redirect re-validation with cycle detection and downgrade protection.
+     */
+    override fun openSafeConnection(
+        initialUrl: String,
+        method: String,
+        headers: Map<String, String>,
+        maxRedirects: Int,
+        connectTimeoutMs: Long,
+        readTimeoutMs: Long,
+        dnsLookup: DnsLookup
     ): AppResult<SafeHttpResponse> {
         var currentUrl = initialUrl
         var redirectCount = 0
         val visitedUrls = mutableSetOf<String>()
 
         while (true) {
-            // 1. Validate destination on EVERY hop (including initial and all redirects)
+            // 1. Validate destination and resolve approved IP addresses
             val netResult = NetworkSecurityPolicy.validateDestination(currentUrl, dnsLookup)
             if (netResult is NetworkValidationResult.Blocked) {
                 return AppResult.Error(
@@ -50,6 +74,9 @@ object SafeHttpTransport {
                 )
             }
 
+            val validDest = netResult as NetworkValidationResult.Valid
+            val approvedIps = validDest.resolvedIps
+
             if (!visitedUrls.add(currentUrl)) {
                 return AppResult.Error(
                     message = "Redirect cycle detected at $currentUrl",
@@ -57,45 +84,47 @@ object SafeHttpTransport {
                 )
             }
 
-            val connection: HttpURLConnection
-            try {
-                val uri = URI(currentUrl)
-                connection = (uri.toURL().openConnection() as HttpURLConnection).apply {
-                    requestMethod = method
-                    instanceFollowRedirects = false // Manual inspection on every hop!
-                    connectTimeout = connectTimeoutMs
-                    readTimeout = readTimeoutMs
-                    setRequestProperty("User-Agent", "Mobiltool/1.0 (Linux; Android)")
-                    headers.forEach { (k, v) -> setRequestProperty(k, v) }
-                }
+            // 2. Build OkHttpClient bound to approved DNS resolution (DNS TOCTOU mitigation)
+            val client = OkHttpClient.Builder()
+                .dns(object : Dns {
+                    override fun lookup(hostname: String): List<InetAddress> {
+                        // Strict binding: Only return approved, pre-validated IPs for this host
+                        return approvedIps
+                    }
+                })
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
+                .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+
+            val requestBuilder = Request.Builder()
+                .url(currentUrl)
+                .header("User-Agent", "Mobiltool/1.0 (Linux; Android)")
+
+            headers.forEach { (k, v) -> requestBuilder.header(k, v) }
+
+            if (method.equals("HEAD", ignoreCase = true)) {
+                requestBuilder.head()
+            } else {
+                requestBuilder.get()
+            }
+
+            val response = try {
+                client.newCall(requestBuilder.build()).execute()
             } catch (e: Exception) {
                 return AppResult.Error(
-                    message = "Failed to establish connection to $currentUrl: ${e.message}",
+                    message = "Failed connecting to $currentUrl: ${e.message}",
                     code = ErrorCode.NETWORK_ERROR
                 )
             }
 
-            val responseCode = try {
-                connection.responseCode
-            } catch (e: Exception) {
-                connection.disconnect()
-                return AppResult.Error(
-                    message = "Network error reading response from $currentUrl: ${e.message}",
-                    code = ErrorCode.NETWORK_ERROR
-                )
-            }
+            val responseCode = response.code
 
-            // 2. Handle HTTP Redirects (301, 302, 303, 307, 308)
-            if (responseCode in listOf(
-                    HttpURLConnection.HTTP_MOVED_PERM,
-                    HttpURLConnection.HTTP_MOVED_TEMP,
-                    HttpURLConnection.HTTP_SEE_OTHER,
-                    307, // Temporary Redirect
-                    308  // Permanent Redirect
-                )
-            ) {
-                val location = connection.getHeaderField("Location")
-                connection.disconnect()
+            // 3. Manual Hop-by-Hop Redirect Handling
+            if (responseCode in listOf(301, 302, 303, 307, 308)) {
+                val location = response.header("Location")
+                response.close()
 
                 if (location.isNullOrBlank()) {
                     return AppResult.Error(
@@ -112,7 +141,6 @@ object SafeHttpTransport {
                     )
                 }
 
-                // Resolve relative location URLs against the current URL
                 val resolvedUri = try {
                     val currentUri = URI(currentUrl)
                     currentUri.resolve(location)
@@ -125,7 +153,7 @@ object SafeHttpTransport {
 
                 val nextUrl = resolvedUri.toString()
 
-                // Protocol downgrade check: Disallow HTTPS -> HTTP downgrade
+                // Protocol downgrade prevention
                 val currentScheme = URI(currentUrl).scheme?.lowercase()
                 val nextScheme = resolvedUri.scheme?.lowercase()
                 if (currentScheme == "https" && nextScheme == "http") {
@@ -139,9 +167,17 @@ object SafeHttpTransport {
                 continue
             }
 
+            val body = response.body
+            val stream = body?.byteStream() ?: "".byteInputStream()
+            val contentLength = body?.contentLength() ?: -1L
+            val contentType = response.header("Content-Type")
+
             return AppResult.Success(
                 SafeHttpResponse(
-                    connection = connection,
+                    response = response,
+                    responseBodyStream = stream,
+                    contentLength = contentLength,
+                    contentType = contentType,
                     finalUrl = currentUrl,
                     responseCode = responseCode,
                     redirectCount = redirectCount

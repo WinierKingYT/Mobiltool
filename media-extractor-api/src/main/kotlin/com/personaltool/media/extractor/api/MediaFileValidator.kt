@@ -4,11 +4,28 @@ import java.io.File
 import java.io.FileInputStream
 import java.security.MessageDigest
 
+enum class ValidationContext {
+    STAGING_PAYLOAD,
+    CANONICAL_MEDIA
+}
+
+enum class DetectedContainer {
+    MP4_ISO_BMFF,
+    MATROSKA_WEBM,
+    MP3,
+    OGG,
+    WAV,
+    FLAC,
+    MPEG_TS,
+    UNKNOWN
+}
+
 sealed interface FileValidationResult {
     data class Valid(
         val fileSizeBytes: Long,
         val extension: String,
         val sha256Hex: String,
+        val containerType: DetectedContainer,
         val detectedMimeType: String
     ) : FileValidationResult
 
@@ -19,7 +36,10 @@ object MediaFileValidator {
 
     const val MIN_MEDIA_SIZE_BYTES = 1024L
 
-    fun validateFile(file: File): FileValidationResult {
+    fun validateFile(
+        file: File,
+        context: ValidationContext = ValidationContext.CANONICAL_MEDIA
+    ): FileValidationResult {
         if (!file.exists() || !file.canRead()) {
             return FileValidationResult.Invalid("File does not exist or cannot be read: ${file.absolutePath}")
         }
@@ -30,12 +50,17 @@ object MediaFileValidator {
         }
 
         val ext = file.extension.lowercase()
-        if (ext == "part" || ext == "tmp" || file.name.endsWith(".part")) {
-            return FileValidationResult.Invalid("File appears to be an uncommitted temporary/part artifact")
+        val isPartArtifact = ext == "part" || ext == "tmp" || file.name.endsWith(".part")
+
+        // Lifecycle Invariant (P2-DIRECT-FIX-01):
+        // STAGING_PAYLOAD allows *.part files for pre-commit content validation.
+        // CANONICAL_MEDIA strictly forbids *.part files from being exposed as completed media.
+        if (context == ValidationContext.CANONICAL_MEDIA && isPartArtifact) {
+            return FileValidationResult.Invalid("Canonical media cannot be an uncommitted temporary or *.part artifact")
         }
 
-        // Read initial header bytes (first 512 bytes)
-        val header = ByteArray(512)
+        // Read initial header bytes (first 768 bytes for multi-packet inspection)
+        val header = ByteArray(768)
         val bytesRead = try {
             FileInputStream(file).use { it.read(header) }
         } catch (e: Exception) {
@@ -70,9 +95,9 @@ object MediaFileValidator {
             }
         }
 
-        // 3. Container Magic Bytes Verification
-        val detectedMime = detectContainerMimeType(header, bytesRead)
-            ?: return FileValidationResult.Invalid("Unrecognized binary container header; not a valid MP4/WebM/MKV/MP3/AAC/OGG/WAV/FLAC media stream")
+        // 3. Container Magic Bytes Verification & Media Type Truth (P2-DIRECT-FIX-05)
+        val (container, mimeType) = detectContainerAndMime(header, bytesRead)
+            ?: return FileValidationResult.Invalid("Unrecognized binary container header; not a valid MP4/WebM/MKV/MP3/AAC/OGG/WAV/FLAC/TS media stream")
 
         val sha256 = calculateSha256(file)
 
@@ -80,57 +105,66 @@ object MediaFileValidator {
             fileSizeBytes = size,
             extension = ext,
             sha256Hex = sha256,
-            detectedMimeType = detectedMime
+            containerType = container,
+            detectedMimeType = mimeType
         )
     }
 
-    private fun detectContainerMimeType(header: ByteArray, length: Int): String? {
+    private fun detectContainerAndMime(header: ByteArray, length: Int): Pair<DetectedContainer, String>? {
         if (length < 4) return null
 
-        // ISO BMFF / MP4 / M4A / MOV (ftyp or moov box at offset 4)
-        if (length >= 8 &&
+        // 1. ISO BMFF / MP4 / M4A / MOV (ftyp box at offset 4)
+        if (length >= 12 &&
             header[4] == 'f'.code.toByte() &&
             header[5] == 't'.code.toByte() &&
             header[6] == 'y'.code.toByte() &&
             header[7] == 'p'.code.toByte()
         ) {
-            return "video/mp4"
+            val majorBrand = String(header, 8, 4, Charsets.ISO_8859_1).trim().lowercase()
+            val mime = when {
+                majorBrand in listOf("m4a", "m4b", "m4p", "f4a", "f4b") -> "audio/mp4"
+                majorBrand in listOf("qt", "moov") -> "video/quicktime"
+                else -> "video/mp4"
+            }
+            return Pair(DetectedContainer.MP4_ISO_BMFF, mime)
         }
 
-        // Matroska / WebM: 0x1A 0x45 0xDF 0xA3
+        // 2. Matroska / WebM: 0x1A 0x45 0xDF 0xA3
         if (header[0] == 0x1A.toByte() &&
             header[1] == 0x45.toByte() &&
             header[2] == 0xDF.toByte() &&
             header[3] == 0xA3.toByte()
         ) {
-            return "video/webm"
+            val headerAscii = String(header, 0, length, Charsets.ISO_8859_1).lowercase()
+            val mime = if (headerAscii.contains("webm")) "video/webm" else "video/x-matroska"
+            return Pair(DetectedContainer.MATROSKA_WEBM, mime)
         }
 
-        // MP3 with ID3v2 tag: "ID3" (0x49 0x44 0x33)
+        // 3. MP3 with ID3v2 tag: "ID3" (0x49 0x44 0x33)
         if (header[0] == 0x49.toByte() &&
             header[1] == 0x44.toByte() &&
             header[2] == 0x33.toByte()
         ) {
-            return "audio/mpeg"
+            return Pair(DetectedContainer.MP3, "audio/mpeg")
         }
 
-        // MP3 without ID3 tag (MPEG audio sync word: 0xFF 0xFB, 0xFF 0xF3, 0xFF 0xF2)
+        // 4. MP3 without ID3 tag (MPEG audio sync word: 0xFF 0xFB, 0xFF 0xF3, 0xFF 0xF2)
         val b0 = header[0].toInt() and 0xFF
         val b1 = header[1].toInt() and 0xFF
         if (b0 == 0xFF && (b1 and 0xE0) == 0xE0 && (b1 and 0x06) != 0x00) {
-            return "audio/mpeg"
+            return Pair(DetectedContainer.MP3, "audio/mpeg")
         }
 
-        // Ogg Container: "OggS" (0x4F 0x67 0x67 0x53)
+        // 5. Ogg Container: "OggS" (0x4F 0x67 0x67 0x53)
         if (header[0] == 0x4F.toByte() &&
             header[1] == 0x67.toByte() &&
             header[2] == 0x67.toByte() &&
             header[3] == 0x53.toByte()
         ) {
-            return "audio/ogg"
+            return Pair(DetectedContainer.OGG, "audio/ogg")
         }
 
-        // RIFF WAV Container: "RIFF" .... "WAVE"
+        // 6. RIFF WAV Container: "RIFF" .... "WAVE"
         if (length >= 12 &&
             header[0] == 'R'.code.toByte() &&
             header[1] == 'I'.code.toByte() &&
@@ -141,21 +175,26 @@ object MediaFileValidator {
             header[10] == 'V'.code.toByte() &&
             header[11] == 'E'.code.toByte()
         ) {
-            return "audio/wav"
+            return Pair(DetectedContainer.WAV, "audio/wav")
         }
 
-        // FLAC: "fLaC" (0x66 0x4C 0x61 0x43)
+        // 7. FLAC: "fLaC" (0x66 0x4C 0x61 0x43)
         if (header[0] == 0x66.toByte() &&
             header[1] == 0x4C.toByte() &&
             header[2] == 0x61.toByte() &&
             header[3] == 0x43.toByte()
         ) {
-            return "audio/flac"
+            return Pair(DetectedContainer.FLAC, "audio/flac")
         }
 
-        // MPEG-TS sync byte: 0x47
-        if (header[0] == 0x47.toByte()) {
-            return "video/mp2t"
+        // 8. MPEG-TS (P2-DIRECT-FIX-05): Check consecutive 188-byte packet sync markers (0x47)
+        if (length >= 565 &&
+            header[0] == 0x47.toByte() &&
+            header[188] == 0x47.toByte() &&
+            header[376] == 0x47.toByte() &&
+            header[564] == 0x47.toByte()
+        ) {
+            return Pair(DetectedContainer.MPEG_TS, "video/mp2t")
         }
 
         return null
