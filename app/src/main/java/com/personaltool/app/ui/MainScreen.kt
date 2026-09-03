@@ -110,6 +110,12 @@ fun MainScreen(
                     )
                     MainNavigationTab.LIBRARY -> LibraryScreen(
                         viewModel = libraryViewModel,
+                        onPlayAudio = { targetId, title, audioPath, durationMs ->
+                            transcriptViewModel.openTranscript(targetId, title, audioPath, durationMs)
+                        },
+                        onPlayVideo = { targetId, title, filePath ->
+                            // Full video viewer modal surface will be bound in player package
+                        },
                         onOpenTranscript = { targetId, title, audioPath, durationMs ->
                             transcriptViewModel.openTranscript(targetId, title, audioPath, durationMs)
                         }
