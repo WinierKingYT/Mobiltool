@@ -4,7 +4,9 @@ import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.common.result.ErrorCode
 import com.personaltool.core.model.media.MediaFormatOption
 import com.personaltool.core.model.media.MediaSource
+import com.personaltool.media.extractor.api.DnsLookup
 import com.personaltool.media.extractor.api.MediaProbeResult
+import com.personaltool.media.extractor.api.SystemDnsLookup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.NewPipe
@@ -16,7 +18,8 @@ import org.schabi.newpipe.extractor.stream.StreamInfo
 import java.util.concurrent.atomic.AtomicBoolean
 
 class NewPipeYouTubeExtractor(
-    private val downloaderBridge: NewPipeDownloaderBridge = NewPipeDownloaderBridge()
+    private val dnsLookup: DnsLookup = SystemDnsLookup,
+    private val downloaderBridge: NewPipeDownloaderBridge = NewPipeDownloaderBridge(dnsLookup = dnsLookup)
 ) : YouTubeExtractor {
 
     companion object {

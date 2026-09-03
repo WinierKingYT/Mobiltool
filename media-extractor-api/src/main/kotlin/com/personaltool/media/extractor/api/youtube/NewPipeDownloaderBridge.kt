@@ -1,17 +1,34 @@
 package com.personaltool.media.extractor.api.youtube
 
+import com.personaltool.media.extractor.api.DnsLookup
+import com.personaltool.media.extractor.api.NetworkSecurityPolicy
+import com.personaltool.media.extractor.api.NetworkValidationResult
+import com.personaltool.media.extractor.api.SystemDnsLookup
+import com.personaltool.media.extractor.api.ValidatedDns
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
+import java.io.IOException
+import java.net.URI
 import java.util.concurrent.TimeUnit
 
+/**
+ * Hardened NewPipe Downloader Bridge (P2-YT-FINAL-01).
+ *
+ * Enforces strict destination security on ALL NewPipe-originated HTTP requests:
+ * 1. Destination pre-validation against SSRF / private IP policies via NetworkSecurityPolicy.
+ * 2. Strict DNS binding via ValidatedDns to the pre-validated IP address set (mitigating DNS TOCTOU / rebinding).
+ * 3. Manual hop-by-hop redirect re-validation with cycle detection and HTTPS -> HTTP downgrade prevention.
+ * 4. Standard TLS certificate and hostname verification (NO trust-all, NO hostname bypasses).
+ * 5. Full support for GET, HEAD, and POST methods with preserved headers.
+ */
 class NewPipeDownloaderBridge(
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .build()
+    private val dnsLookup: DnsLookup = SystemDnsLookup,
+    private val connectTimeoutMs: Long = 15000L,
+    private val readTimeoutMs: Long = 15000L,
+    private val maxRedirects: Int = 5
 ) : Downloader() {
 
     companion object {
@@ -19,50 +36,126 @@ class NewPipeDownloaderBridge(
     }
 
     override fun execute(request: Request): Response {
-        val httpMethod = request.httpMethod()
-        val url = request.url()
+        val initialUrl = request.url()
+        val initialMethod = request.httpMethod()
         val headers = request.headers()
         val dataToSend = request.dataToSend()
 
-        val reqBuilder = okhttp3.Request.Builder().url(url)
-        var hasUserAgent = false
-        var hasAcceptLang = false
+        var currentUrl = initialUrl
+        var currentMethod = initialMethod
+        var redirectCount = 0
+        val visitedUrls = mutableSetOf<String>()
 
-        headers?.forEach { (name, values) ->
-            if (name.equals("User-Agent", ignoreCase = true)) hasUserAgent = true
-            if (name.equals("Accept-Language", ignoreCase = true)) hasAcceptLang = true
-            values.forEach { v -> reqBuilder.addHeader(name, v) }
-        }
+        while (true) {
+            // 1. Destination validation and approved IP resolution
+            val netResult = NetworkSecurityPolicy.validateDestination(currentUrl, dnsLookup)
+            if (netResult is NetworkValidationResult.Blocked) {
+                throw IOException("Network policy blocked request to $currentUrl: ${netResult.reason}")
+            }
 
-        if (!hasUserAgent) {
-            reqBuilder.header("User-Agent", DEFAULT_USER_AGENT)
-        }
-        if (!hasAcceptLang) {
-            reqBuilder.header("Accept-Language", "en-US,en;q=0.9")
-        }
+            val validDest = netResult as NetworkValidationResult.Valid
+            val approvedIps = validDest.resolvedIps
 
-        if (httpMethod.equals("POST", ignoreCase = true)) {
-            val body = dataToSend?.toRequestBody() ?: ByteArray(0).toRequestBody()
-            reqBuilder.post(body)
-        } else if (httpMethod.equals("HEAD", ignoreCase = true)) {
-            reqBuilder.head()
-        } else {
-            reqBuilder.get()
-        }
+            if (!visitedUrls.add(currentUrl)) {
+                throw IOException("Redirect cycle detected at $currentUrl")
+            }
 
-        val okResponse = client.newCall(reqBuilder.build()).execute()
-        val responseBody = okResponse.body?.string() ?: ""
-        val responseHeaders = mutableMapOf<String, List<String>>()
-        okResponse.headers.names().forEach { name ->
-            responseHeaders[name] = okResponse.headers.values(name)
-        }
+            // 2. Build OkHttpClient bound to approved DNS resolution and standard TLS
+            val client = OkHttpClient.Builder()
+                .dns(ValidatedDns(approvedIps))
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
+                .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
+                .build()
 
-        return Response(
-            okResponse.code,
-            okResponse.message,
-            responseHeaders,
-            responseBody,
-            okResponse.request.url.toString()
-        )
+            val reqBuilder = okhttp3.Request.Builder().url(currentUrl)
+            var hasUserAgent = false
+            var hasAcceptLang = false
+
+            headers?.forEach { (name, values) ->
+                if (name.equals("User-Agent", ignoreCase = true)) hasUserAgent = true
+                if (name.equals("Accept-Language", ignoreCase = true)) hasAcceptLang = true
+                values.forEach { v -> reqBuilder.addHeader(name, v) }
+            }
+
+            if (!hasUserAgent) {
+                reqBuilder.header("User-Agent", DEFAULT_USER_AGENT)
+            }
+            if (!hasAcceptLang) {
+                reqBuilder.header("Accept-Language", "en-US,en;q=0.9")
+            }
+
+            // Method handling
+            if (currentMethod.equals("POST", ignoreCase = true)) {
+                val body = dataToSend?.toRequestBody() ?: ByteArray(0).toRequestBody()
+                reqBuilder.post(body)
+            } else if (currentMethod.equals("HEAD", ignoreCase = true)) {
+                reqBuilder.head()
+            } else {
+                reqBuilder.get()
+            }
+
+            val okResponse = try {
+                client.newCall(reqBuilder.build()).execute()
+            } catch (e: Exception) {
+                throw IOException("Failed connecting to $currentUrl: ${e.message}", e)
+            }
+
+            val responseCode = okResponse.code
+
+            // 3. Manual Hop-by-Hop Redirect Handling
+            if (responseCode in listOf(301, 302, 303, 307, 308)) {
+                val location = okResponse.header("Location")
+                okResponse.close()
+
+                if (location.isNullOrBlank()) {
+                    throw IOException("HTTP $responseCode redirect from $currentUrl missing Location header")
+                }
+
+                redirectCount++
+                if (redirectCount > maxRedirects) {
+                    throw IOException("Redirect limit ($maxRedirects) exceeded")
+                }
+
+                val resolvedUri = try {
+                    val currentUri = URI(currentUrl)
+                    currentUri.resolve(location)
+                } catch (e: Exception) {
+                    throw IOException("Malformed redirect Location header: $location", e)
+                }
+
+                val nextUrl = resolvedUri.toString()
+
+                // Protocol downgrade prevention
+                val currentScheme = URI(currentUrl).scheme?.lowercase()
+                val nextScheme = resolvedUri.scheme?.lowercase()
+                if (currentScheme == "https" && nextScheme == "http") {
+                    throw IOException("Insecure protocol downgrade from HTTPS to HTTP blocked on redirect to $nextUrl")
+                }
+
+                // 303 See Other changes method to GET
+                if (responseCode == 303) {
+                    currentMethod = "GET"
+                }
+
+                currentUrl = nextUrl
+                continue
+            }
+
+            val responseBody = okResponse.body?.string() ?: ""
+            val responseHeaders = mutableMapOf<String, List<String>>()
+            okResponse.headers.names().forEach { name ->
+                responseHeaders[name] = okResponse.headers.values(name)
+            }
+
+            return Response(
+                okResponse.code,
+                okResponse.message,
+                responseHeaders,
+                responseBody,
+                okResponse.request.url.toString()
+            )
+        }
     }
 }

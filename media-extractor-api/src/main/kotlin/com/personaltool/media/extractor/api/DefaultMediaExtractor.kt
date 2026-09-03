@@ -10,9 +10,9 @@ import java.io.File
 
 class DefaultMediaExtractor(
     override val adapterName: String = "TruthfulPlatformMediaExtractor",
-    private val streamDownloader: RealHttpStreamDownloader = RealHttpStreamDownloader(),
-    private val youtubeExtractor: YouTubeExtractor = NewPipeYouTubeExtractor(),
-    private val dnsLookup: DnsLookup = SystemDnsLookup
+    private val dnsLookup: DnsLookup = SystemDnsLookup,
+    private val streamDownloader: RealHttpStreamDownloader = RealHttpStreamDownloader(dnsLookup = dnsLookup),
+    private val youtubeExtractor: YouTubeExtractor = NewPipeYouTubeExtractor(dnsLookup = dnsLookup)
 ) : MediaExtractor {
 
     override fun canHandle(url: String): Boolean {

@@ -7,11 +7,14 @@ import com.personaltool.core.model.media.MediaFormatOption
 import com.personaltool.core.model.media.MediaSource
 import com.personaltool.media.extractor.api.*
 import kotlinx.coroutines.test.runTest
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.schabi.newpipe.extractor.downloader.Request
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.IOException
 import java.net.InetAddress
 
 class YouTubeExtractorTest {
@@ -92,8 +95,8 @@ class YouTubeExtractorTest {
         }
 
         val defaultExtractor = DefaultMediaExtractor(
-            youtubeExtractor = fakeYt,
-            dnsLookup = publicDns
+            dnsLookup = publicDns,
+            youtubeExtractor = fakeYt
         )
 
         val probeResult = defaultExtractor.probeUrl("https://www.youtube.com/watch?v=sample123")
@@ -136,9 +139,9 @@ class YouTubeExtractorTest {
         }
 
         val defaultExtractor = DefaultMediaExtractor(
+            dnsLookup = publicDns,
             streamDownloader = streamDownloader,
-            youtubeExtractor = fakeYt,
-            dnsLookup = publicDns
+            youtubeExtractor = fakeYt
         )
 
         val destFile = File(tempFolder.root, "downloaded_yt.mp4")
@@ -174,7 +177,7 @@ class YouTubeExtractorTest {
             }
         }
 
-        val defaultExtractor = DefaultMediaExtractor(youtubeExtractor = fakeYt, dnsLookup = publicDns)
+        val defaultExtractor = DefaultMediaExtractor(dnsLookup = publicDns, youtubeExtractor = fakeYt)
         val result = defaultExtractor.probeUrl("https://www.youtube.com/watch?v=deleted_video")
 
         assertThat(result).isInstanceOf(AppResult.Error::class.java)
@@ -198,5 +201,72 @@ class YouTubeExtractorTest {
         val xError = xResult as AppResult.Error
         assertThat(xError.code).isEqualTo(ErrorCode.EXTRACTION_FAILED)
         assertThat(xError.message).contains("PLATFORM_EXTRACTION_UNAVAILABLE")
+    }
+
+    // ==========================================
+    // P2-YT-FINAL-01: NewPipeDownloaderBridge Security Tests
+    // ==========================================
+
+    @Test
+    fun bridge_rejectsPrivateIpDestination_throwsIOException() {
+        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns)
+        val privateUrls = listOf(
+            "http://192.168.1.1/test",
+            "http://10.0.0.1/test",
+            "http://127.0.0.1/test",
+            "http://169.254.169.254/latest/meta-data",
+            "http://localhost:8080/internal"
+        )
+
+        for (url in privateUrls) {
+            val req = Request.newBuilder()
+                .url(url)
+                .httpMethod("GET")
+                .headers(emptyMap())
+                .build()
+            try {
+                bridge.execute(req)
+                fail("Expected IOException for private URL: $url")
+            } catch (e: IOException) {
+                assertThat(e.message).contains("Network policy blocked request")
+            }
+        }
+    }
+
+    @Test
+    fun bridge_rejectsCredentialsInUrl_throwsIOException() {
+        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns)
+        val req = Request.newBuilder()
+            .url("https://admin:secret@example.com/api")
+            .httpMethod("GET")
+            .headers(emptyMap())
+            .build()
+
+        try {
+            bridge.execute(req)
+            fail("Expected IOException for URL with credentials")
+        } catch (e: IOException) {
+            assertThat(e.message).contains("Network policy blocked request")
+        }
+    }
+
+    @Test
+    fun bridge_rejectsNonHttpSchemes_throwsIOException() {
+        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns)
+        val invalidSchemes = listOf("file:///etc/passwd", "ftp://example.com/file", "javascript:alert(1)")
+
+        for (url in invalidSchemes) {
+            val req = Request.newBuilder()
+                .url(url)
+                .httpMethod("GET")
+                .headers(emptyMap())
+                .build()
+            try {
+                bridge.execute(req)
+                fail("Expected IOException for invalid scheme URL: $url")
+            } catch (e: IOException) {
+                assertThat(e.message).contains("Network policy blocked request")
+            }
+        }
     }
 }
