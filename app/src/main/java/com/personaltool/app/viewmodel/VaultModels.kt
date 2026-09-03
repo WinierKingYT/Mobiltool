@@ -114,12 +114,13 @@ object VaultFileAvailabilityInspector {
     }
 
     fun inspectMediaFile(file: File, expectedSizeBytes: Long, downloadStatus: DownloadStatus): VaultFileState {
-        if (!file.exists()) {
-            return VaultFileState.MISSING
-        }
-
+        // NOT_READY PRECEDENCE: downloadStatus != COMPLETED must resolve before file existence/read checks
         if (downloadStatus != DownloadStatus.COMPLETED) {
             return VaultFileState.NOT_READY
+        }
+
+        if (!file.exists()) {
+            return VaultFileState.MISSING
         }
 
         val ext = file.extension.lowercase()
@@ -212,6 +213,11 @@ class DefaultVaultItemEvaluator(
     }
 
     private fun evaluateMediaFileState(item: MediaItem, path: String?): VaultFileState {
+        // NOT_READY PRECEDENCE: downloadStatus != COMPLETED must resolve before null path check
+        if (item.downloadStatus != DownloadStatus.COMPLETED) {
+            return VaultFileState.NOT_READY
+        }
+
         if (path.isNullOrBlank()) {
             return VaultFileState.NO_LOCAL_FILE
         }
@@ -241,7 +247,7 @@ class DefaultVaultItemEvaluator(
 
         return when (item.mediaType) {
             MediaType.AUDIO_ONLY -> VaultPrimaryAction.PLAY_AUDIO
-            MediaType.VIDEO -> VaultPrimaryAction.PLAY_VIDEO
+            MediaType.VIDEO -> VaultPrimaryAction.UNAVAILABLE // Truthful: video playback engine unbound until P3-E05
             else -> VaultPrimaryAction.UNAVAILABLE
         }
     }

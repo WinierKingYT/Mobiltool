@@ -25,7 +25,8 @@ class AppViewModelFactory(
                 TranscriptViewModel(
                     transcriptDao = db.transcriptDao(),
                     callDao = db.callDao(),
-                    mediaDao = db.mediaDao()
+                    mediaDao = db.mediaDao(),
+                    audioPlaybackController = application.audioPlaybackController
                 ) as T
             }
             modelClass.isAssignableFrom(SystemStatusViewModel::class.java) -> {

@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.personaltool.app.audio.AudioPlaybackController
+import com.personaltool.app.audio.AudioPlaybackPhase
 import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.model.transcript.Transcript
 import com.personaltool.core.model.transcript.TranscriptSegment
@@ -18,8 +20,6 @@ import com.personaltool.transcription.api.TranscriptExporter
 import com.personaltool.transcription.api.TranscriptionEngine
 import com.personaltool.transcription.api.TranscriptionProgress
 import com.personaltool.transcription.api.TranscriptionRequest
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,13 +45,36 @@ class TranscriptViewModel(
     private val transcriptDao: TranscriptDao,
     private val callDao: CallDao,
     private val mediaDao: MediaDao,
-    private val transcriptionEngine: TranscriptionEngine = DefaultTranscriptionEngine()
+    private val audioPlaybackController: AudioPlaybackController? = null,
+    private val transcriptionEngine: TranscriptionEngine = DefaultTranscriptionEngine(),
+    coroutineScope: kotlinx.coroutines.CoroutineScope? = null
 ) : ViewModel() {
+
+    private val scope: kotlinx.coroutines.CoroutineScope = coroutineScope ?: viewModelScope
 
     private val _uiState = MutableStateFlow(TranscriptViewerState())
     val uiState: StateFlow<TranscriptViewerState> = _uiState.asStateFlow()
 
-    private var playbackTickerJob: Job? = null
+    init {
+        // Observe real AudioPlaybackController state (zero synthetic timer)
+        if (audioPlaybackController != null) {
+            scope.launch {
+                audioPlaybackController.state.collect { playbackState ->
+                    val current = _uiState.value
+                    if (current.isOpen && playbackState.targetId == current.targetId) {
+                        _uiState.update { state ->
+                            state.copy(
+                                isPlaying = playbackState.phase == AudioPlaybackPhase.PLAYING,
+                                currentPlaybackPositionMs = playbackState.currentPositionMs,
+                                totalDurationMs = if (playbackState.durationMs > 0L) playbackState.durationMs else state.totalDurationMs,
+                                activeSegmentId = findActiveSegment(state.transcript?.segments, playbackState.currentPositionMs)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     fun openTranscript(
         targetId: String,
@@ -72,7 +95,12 @@ class TranscriptViewModel(
             )
         }
 
-        viewModelScope.launch {
+        // Open real audio controller session if file is specified
+        if (!audioFilePath.isNullOrBlank()) {
+            audioPlaybackController?.openAudio(targetId, targetTitle, audioFilePath)
+        }
+
+        scope.launch {
             val existing = transcriptDao.getTranscriptByTargetId(targetId)
             if (existing != null) {
                 val domainTranscript = existing.toDomain()
@@ -94,8 +122,11 @@ class TranscriptViewModel(
     }
 
     fun closeTranscript() {
-        pausePlayback()
-        _uiState.update { it.copy(isOpen = false) }
+        val current = _uiState.value
+        if (audioPlaybackController?.state?.value?.targetId == current.targetId) {
+            audioPlaybackController?.release()
+        }
+        _uiState.update { it.copy(isOpen = false, isPlaying = false) }
     }
 
     fun requestTranscription() {
@@ -103,7 +134,7 @@ class TranscriptViewModel(
         val targetId = state.targetId ?: return
         val audioPath = state.audioFilePath ?: ""
 
-        viewModelScope.launch {
+        scope.launch {
             _uiState.update {
                 it.copy(
                     status = TranscriptStatus.RUNNING,
@@ -153,18 +184,29 @@ class TranscriptViewModel(
         }
     }
 
-    // Playback & Seek Synchronizer
+    // Real Audio Playback & Seek Synchronizer
     fun togglePlayPause() {
-        if (_uiState.value.isPlaying) {
-            pausePlayback()
-        } else {
-            startPlayback()
+        val state = _uiState.value
+        val audioPath = state.audioFilePath
+
+        if (audioPath.isNullOrBlank()) {
+            // Cannot play without an audio file
+            return
         }
+
+        val controller = audioPlaybackController ?: return
+
+        if (controller.state.value.targetId != state.targetId) {
+            controller.openAudio(state.targetId ?: "", state.targetTitle, audioPath)
+        }
+
+        controller.togglePlayPause()
     }
 
     fun seekToPosition(positionMs: Long) {
         val duration = _uiState.value.totalDurationMs.coerceAtLeast(1L)
         val clamped = positionMs.coerceIn(0L, duration)
+        audioPlaybackController?.seekTo(clamped)
         _uiState.update {
             it.copy(
                 currentPlaybackPositionMs = clamped,
@@ -174,48 +216,20 @@ class TranscriptViewModel(
     }
 
     fun seekToSegment(segment: TranscriptSegment) {
-        seekToPosition(segment.startTimeMs)
-        if (!_uiState.value.isPlaying) {
-            startPlayback()
-        }
-    }
-
-    private fun startPlayback() {
-        playbackTickerJob?.cancel()
-        _uiState.update { it.copy(isPlaying = true) }
-
-        playbackTickerJob = viewModelScope.launch {
-            while (_uiState.value.isPlaying) {
-                delay(200)
-                val current = _uiState.value.currentPlaybackPositionMs + 200
-                val total = _uiState.value.totalDurationMs
-                if (current >= total) {
-                    _uiState.update {
-                        it.copy(
-                            currentPlaybackPositionMs = total,
-                            isPlaying = false,
-                            activeSegmentId = null
-                        )
-                    }
-                    break
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            currentPlaybackPositionMs = current,
-                            activeSegmentId = findActiveSegment(it.transcript?.segments, current)
-                        )
-                    }
-                }
+        val controller = audioPlaybackController
+        val state = _uiState.value
+        if (controller != null && !state.audioFilePath.isNullOrBlank()) {
+            if (controller.state.value.targetId != state.targetId) {
+                controller.openAudio(state.targetId ?: "", state.targetTitle, state.audioFilePath)
             }
+            controller.seekTo(segment.startTimeMs)
+            controller.play()
+        } else {
+            seekToPosition(segment.startTimeMs)
         }
     }
 
-    private fun pausePlayback() {
-        playbackTickerJob?.cancel()
-        _uiState.update { it.copy(isPlaying = false) }
-    }
-
-    private fun findActiveSegment(segments: List<TranscriptSegment>?, positionMs: Long): String? {
+    fun findActiveSegment(segments: List<TranscriptSegment>?, positionMs: Long): String? {
         if (segments.isNullOrEmpty()) return null
         return segments.find { positionMs in it.startTimeMs..it.endTimeMs }?.id
     }

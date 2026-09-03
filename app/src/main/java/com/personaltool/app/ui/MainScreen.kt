@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.personaltool.app.PersonalToolApplication
+import com.personaltool.app.ui.audio.AudioPlaybackSheet
 import com.personaltool.app.ui.calls.CallsScreen
 import com.personaltool.app.ui.library.LibraryScreen
 import com.personaltool.app.ui.media.MediaIntakeScreen
@@ -111,10 +112,10 @@ fun MainScreen(
                     MainNavigationTab.LIBRARY -> LibraryScreen(
                         viewModel = libraryViewModel,
                         onPlayAudio = { targetId, title, audioPath, durationMs ->
-                            // Explicit audio playback request boundary (audio engine surface bound in P3-E04)
+                            app.audioPlaybackController.openAudio(targetId, title, audioPath)
                         },
                         onPlayVideo = { targetId, title, filePath ->
-                            // Explicit video playback request boundary (video engine surface bound in P3-E05)
+                            // Video playback engine unbound until P3-E05
                         },
                         onOpenTranscript = { targetId, title, audioPath, durationMs ->
                             transcriptViewModel.openTranscript(targetId, title, audioPath, durationMs)
@@ -172,6 +173,12 @@ fun MainScreen(
                 }
             }
         }
+
+        // Foreground Audio Playback Sheet
+        AudioPlaybackSheet(
+            controller = app.audioPlaybackController,
+            onDismiss = { app.audioPlaybackController.release() }
+        )
 
         // Modal Transcript Viewer Sheet
         TranscriptViewerSheet(viewModel = transcriptViewModel)

@@ -113,7 +113,7 @@ class VaultItemEvaluatorTest {
             direction = CallDirection.INCOMING,
             startTimeEpochMs = 1000L,
             audioFilePath = file.absolutePath,
-            fileSizeBytes = 8192L // Expected 8192, actual 4096
+            fileSizeBytes = 8192L
         )
 
         val vaultCall = evaluator.evaluateCall(session)
@@ -129,7 +129,7 @@ class VaultItemEvaluatorTest {
                 0x00, 0x00, 0x00, 0x0C,
                 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte(),
                 'M'.code.toByte(), '4'.code.toByte(), 'A'.code.toByte(), ' '.code.toByte()
-            )) // Only 12 bytes
+            ))
         }
 
         val session = CallSession(
@@ -184,7 +184,7 @@ class VaultItemEvaluatorTest {
     fun call_invalidMediaContent_evaluatesToInvalidMedia() {
         val badFile = tempFolder.newFile("corrupt_call.m4a")
         FileOutputStream(badFile).use { fos ->
-            fos.write(ByteArray(4096) { 0x55 }) // No valid media header
+            fos.write(ByteArray(4096) { 0x55 })
         }
 
         val session = CallSession(
@@ -224,17 +224,17 @@ class VaultItemEvaluatorTest {
     }
 
     // ==========================================
-    // MEDIA FILE STATE EVALUATION TESTS
+    // MEDIA FILE STATE EVALUATION & NOT_READY PRECEDENCE TESTS
     // ==========================================
 
     @Test
-    fun media_nullLocalPath_evaluatesToNoLocalFile() {
+    fun media_nullLocalPath_whenCompleted_evaluatesToNoLocalFile() {
         val item = MediaItem(
             id = "media-1",
             sourceUrl = "https://example.com/video",
             title = "Test Video",
             localFilePath = null,
-            downloadStatus = DownloadStatus.IDLE
+            downloadStatus = DownloadStatus.COMPLETED
         )
 
         val vaultMedia = evaluator.evaluateMedia(item)
@@ -244,14 +244,30 @@ class VaultItemEvaluatorTest {
     }
 
     @Test
-    fun media_downloadStatusDownloading_evaluatesToNotReady() {
-        val file = createValidMp4File("in_progress.mp4", size = 4096)
+    fun media_downloadStatusDownloading_withNullPath_evaluatesToNotReady() {
+        // NOT_READY PRECEDENCE: downloadStatus != COMPLETED resolves to NOT_READY even if path is null
         val item = MediaItem(
-            id = "media-2",
+            id = "media-dl-null",
             sourceUrl = "https://example.com/video",
-            title = "In Progress Download",
-            localFilePath = file.absolutePath,
-            fileSizeBytes = 4096L,
+            title = "Downloading Null Path",
+            localFilePath = null,
+            downloadStatus = DownloadStatus.DOWNLOADING
+        )
+
+        val vaultMedia = evaluator.evaluateMedia(item)
+        assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.NOT_READY)
+        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+        assertThat(vaultMedia.availableSizeBytes).isEqualTo(0L)
+    }
+
+    @Test
+    fun media_downloadStatusDownloading_withMissingPath_evaluatesToNotReady() {
+        // NOT_READY PRECEDENCE: downloadStatus != COMPLETED resolves to NOT_READY even if path does not exist
+        val item = MediaItem(
+            id = "media-dl-missing",
+            sourceUrl = "https://example.com/video",
+            title = "Downloading Missing Path",
+            localFilePath = "/path/that/does/not/exist.mp4",
             downloadStatus = DownloadStatus.DOWNLOADING
         )
 
@@ -263,13 +279,11 @@ class VaultItemEvaluatorTest {
 
     @Test
     fun media_downloadStatusFailed_evaluatesToNotReady() {
-        val file = createValidMp4File("failed_partial.mp4", size = 4096)
         val item = MediaItem(
             id = "media-failed",
             sourceUrl = "https://example.com/video",
             title = "Failed Download",
-            localFilePath = file.absolutePath,
-            fileSizeBytes = 4096L,
+            localFilePath = "/path/partial.mp4",
             downloadStatus = DownloadStatus.FAILED
         )
 
@@ -280,7 +294,7 @@ class VaultItemEvaluatorTest {
     }
 
     @Test
-    fun media_missingFile_evaluatesToMissing() {
+    fun media_completed_withMissingFile_evaluatesToMissing() {
         val missingPath = File(tempFolder.root, "missing_video.mp4").absolutePath
         val item = MediaItem(
             id = "media-3",
@@ -369,7 +383,8 @@ class VaultItemEvaluatorTest {
     }
 
     @Test
-    fun media_validVideo_evaluatesToAvailable_andPlayVideo() {
+    fun media_validVideo_evaluatesToAvailable_withPlaybackUnboundUntilE05() {
+        // Truthful: fileState is AVAILABLE, but primaryAction is UNAVAILABLE until video engine binding in E05
         val file = createValidMp4File("valid_video.mp4", size = 4096)
         val item = MediaItem(
             id = "media-6",
@@ -383,7 +398,7 @@ class VaultItemEvaluatorTest {
 
         val vaultMedia = evaluator.evaluateMedia(item)
         assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.AVAILABLE)
-        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.PLAY_VIDEO)
+        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
         assertThat(vaultMedia.availableSizeBytes).isEqualTo(4096L)
     }
 
@@ -407,7 +422,7 @@ class VaultItemEvaluatorTest {
     }
 
     @Test
-    fun media_availableVideoWithTranscript_retainsPrimaryPlayVideo() {
+    fun media_availableVideoWithTranscript_retainsAvailableFileStateAndTranscriptAccess() {
         val file = createValidMp4File("transcribed_video.mp4", size = 4096)
         val item = MediaItem(
             id = "media-8",
@@ -422,7 +437,6 @@ class VaultItemEvaluatorTest {
 
         val vaultMedia = evaluator.evaluateMedia(item)
         assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.AVAILABLE)
-        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.PLAY_VIDEO)
         assertThat(vaultMedia.hasTranscript).isTrue()
     }
 }
