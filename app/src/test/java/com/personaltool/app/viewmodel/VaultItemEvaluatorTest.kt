@@ -25,7 +25,6 @@ class VaultItemEvaluatorTest {
     private fun createValidMp4File(name: String, size: Int = 4096): File {
         val file = tempFolder.newFile(name)
         FileOutputStream(file).use { fos ->
-            // Write 8-byte MP4 ftyp header
             val header = byteArrayOf(
                 0x00, 0x00, 0x00, 0x20,
                 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte(),
@@ -107,14 +106,14 @@ class VaultItemEvaluatorTest {
 
     @Test
     fun call_sizeMismatch_evaluatesToSizeMismatch() {
-        val file = createValidM4aFile("call_mismatch.m4a", size = 2048)
+        val file = createValidM4aFile("call_mismatch.m4a", size = 4096)
         val session = CallSession(
             id = "call-4",
             phoneNumber = "+1234567890",
             direction = CallDirection.INCOMING,
             startTimeEpochMs = 1000L,
             audioFilePath = file.absolutePath,
-            fileSizeBytes = 5000L // Expected 5000, actual 2048
+            fileSizeBytes = 8192L // Expected 8192, actual 4096
         )
 
         val vaultCall = evaluator.evaluateCall(session)
@@ -123,10 +122,69 @@ class VaultItemEvaluatorTest {
     }
 
     @Test
+    fun call_tinyFtypFile_evaluatesToInvalidMedia() {
+        val tinyFile = tempFolder.newFile("tiny_call.m4a")
+        FileOutputStream(tinyFile).use { fos ->
+            fos.write(byteArrayOf(
+                0x00, 0x00, 0x00, 0x0C,
+                'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte(),
+                'M'.code.toByte(), '4'.code.toByte(), 'A'.code.toByte(), ' '.code.toByte()
+            )) // Only 12 bytes
+        }
+
+        val session = CallSession(
+            id = "call-tiny",
+            phoneNumber = "+1234567890",
+            direction = CallDirection.INCOMING,
+            startTimeEpochMs = 1000L,
+            audioFilePath = tinyFile.absolutePath,
+            fileSizeBytes = 12L
+        )
+
+        val vaultCall = evaluator.evaluateCall(session)
+        assertThat(vaultCall.fileState).isEqualTo(VaultFileState.INVALID_MEDIA)
+        assertThat(vaultCall.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+    }
+
+    @Test
+    fun call_partFileWithFtyp_evaluatesToInvalidMedia() {
+        val partFile = createValidM4aFile("active_call.m4a.part", size = 4096)
+        val session = CallSession(
+            id = "call-part",
+            phoneNumber = "+1234567890",
+            direction = CallDirection.INCOMING,
+            startTimeEpochMs = 1000L,
+            audioFilePath = partFile.absolutePath,
+            fileSizeBytes = 4096L
+        )
+
+        val vaultCall = evaluator.evaluateCall(session)
+        assertThat(vaultCall.fileState).isEqualTo(VaultFileState.INVALID_MEDIA)
+        assertThat(vaultCall.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+    }
+
+    @Test
+    fun call_tmpFileWithFtyp_evaluatesToInvalidMedia() {
+        val tmpFile = createValidM4aFile("temp_call.m4a.tmp", size = 4096)
+        val session = CallSession(
+            id = "call-tmp",
+            phoneNumber = "+1234567890",
+            direction = CallDirection.INCOMING,
+            startTimeEpochMs = 1000L,
+            audioFilePath = tmpFile.absolutePath,
+            fileSizeBytes = 4096L
+        )
+
+        val vaultCall = evaluator.evaluateCall(session)
+        assertThat(vaultCall.fileState).isEqualTo(VaultFileState.INVALID_MEDIA)
+        assertThat(vaultCall.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+    }
+
+    @Test
     fun call_invalidMediaContent_evaluatesToInvalidMedia() {
         val badFile = tempFolder.newFile("corrupt_call.m4a")
         FileOutputStream(badFile).use { fos ->
-            fos.write(ByteArray(2048) { 0x55 }) // No ftyp atom
+            fos.write(ByteArray(4096) { 0x55 }) // No valid media header
         }
 
         val session = CallSession(
@@ -135,7 +193,7 @@ class VaultItemEvaluatorTest {
             direction = CallDirection.INCOMING,
             startTimeEpochMs = 1000L,
             audioFilePath = badFile.absolutePath,
-            fileSizeBytes = 2048L
+            fileSizeBytes = 4096L
         )
 
         val vaultCall = evaluator.evaluateCall(session)
@@ -186,7 +244,7 @@ class VaultItemEvaluatorTest {
     }
 
     @Test
-    fun media_downloadNotCompleted_evaluatesToUnreadable() {
+    fun media_downloadStatusDownloading_evaluatesToNotReady() {
         val file = createValidMp4File("in_progress.mp4", size = 4096)
         val item = MediaItem(
             id = "media-2",
@@ -198,8 +256,27 @@ class VaultItemEvaluatorTest {
         )
 
         val vaultMedia = evaluator.evaluateMedia(item)
-        assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.UNREADABLE)
+        assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.NOT_READY)
         assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+        assertThat(vaultMedia.availableSizeBytes).isEqualTo(0L)
+    }
+
+    @Test
+    fun media_downloadStatusFailed_evaluatesToNotReady() {
+        val file = createValidMp4File("failed_partial.mp4", size = 4096)
+        val item = MediaItem(
+            id = "media-failed",
+            sourceUrl = "https://example.com/video",
+            title = "Failed Download",
+            localFilePath = file.absolutePath,
+            fileSizeBytes = 4096L,
+            downloadStatus = DownloadStatus.FAILED
+        )
+
+        val vaultMedia = evaluator.evaluateMedia(item)
+        assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.NOT_READY)
+        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+        assertThat(vaultMedia.availableSizeBytes).isEqualTo(0L)
     }
 
     @Test
@@ -219,8 +296,42 @@ class VaultItemEvaluatorTest {
     }
 
     @Test
+    fun media_partFile_evaluatesToInvalidMedia() {
+        val partFile = createValidMp4File("download.mp4.part", size = 4096)
+        val item = MediaItem(
+            id = "media-part",
+            sourceUrl = "https://example.com/video",
+            title = "Part Video",
+            localFilePath = partFile.absolutePath,
+            fileSizeBytes = 4096L,
+            downloadStatus = DownloadStatus.COMPLETED
+        )
+
+        val vaultMedia = evaluator.evaluateMedia(item)
+        assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.INVALID_MEDIA)
+        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+    }
+
+    @Test
+    fun media_tmpFile_evaluatesToInvalidMedia() {
+        val tmpFile = createValidMp4File("download.mp4.tmp", size = 4096)
+        val item = MediaItem(
+            id = "media-tmp",
+            sourceUrl = "https://example.com/video",
+            title = "Tmp Video",
+            localFilePath = tmpFile.absolutePath,
+            fileSizeBytes = 4096L,
+            downloadStatus = DownloadStatus.COMPLETED
+        )
+
+        val vaultMedia = evaluator.evaluateMedia(item)
+        assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.INVALID_MEDIA)
+        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+    }
+
+    @Test
     fun media_sizeMismatch_evaluatesToSizeMismatch() {
-        val file = createValidMp4File("media_mismatch.mp4", size = 2048)
+        val file = createValidMp4File("media_mismatch.mp4", size = 4096)
         val item = MediaItem(
             id = "media-4",
             sourceUrl = "https://example.com/video",
@@ -297,7 +408,6 @@ class VaultItemEvaluatorTest {
 
     @Test
     fun media_availableVideoWithTranscript_retainsPrimaryPlayVideo() {
-        // Critical Test Invariant: Transcript is secondary, playable media does not lose playback
         val file = createValidMp4File("transcribed_video.mp4", size = 4096)
         val item = MediaItem(
             id = "media-8",

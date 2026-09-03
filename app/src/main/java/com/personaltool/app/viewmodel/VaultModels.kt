@@ -1,17 +1,16 @@
 package com.personaltool.app.viewmodel
 
-import com.personaltool.app.capture.AudioFileInspector
 import com.personaltool.core.model.call.CallSession
 import com.personaltool.core.model.media.DownloadStatus
 import com.personaltool.core.model.media.MediaItem
 import com.personaltool.core.model.media.MediaType
-import com.personaltool.media.extractor.api.FileValidationResult
 import com.personaltool.media.extractor.api.MediaFileValidator
-import com.personaltool.media.extractor.api.ValidationContext
 import java.io.File
+import java.io.FileInputStream
 
 enum class VaultFileState {
     AVAILABLE,
+    NOT_READY,
     NO_LOCAL_FILE,
     MISSING,
     UNREADABLE,
@@ -66,6 +65,101 @@ interface VaultItemEvaluator {
     fun evaluateMedia(item: MediaItem): VaultItem.Media
 }
 
+object VaultFileAvailabilityInspector {
+
+    const val MIN_CALL_SIZE_BYTES = 2048L
+    const val MIN_MEDIA_SIZE_BYTES = 1024L
+    const val HEADER_INSPECTION_BYTES = 768
+
+    fun inspectCallFile(file: File, expectedSizeBytes: Long): VaultFileState {
+        if (!file.exists()) {
+            return VaultFileState.MISSING
+        }
+
+        val ext = file.extension.lowercase()
+        if (ext == "part" || ext == "tmp" || file.name.endsWith(".part") || file.name.endsWith(".tmp")) {
+            return VaultFileState.INVALID_MEDIA
+        }
+
+        if (!file.isFile || !file.canRead()) {
+            return VaultFileState.UNREADABLE
+        }
+
+        val actualLength = file.length()
+        if (expectedSizeBytes > 0L && actualLength != expectedSizeBytes) {
+            return VaultFileState.SIZE_MISMATCH
+        }
+
+        if (actualLength < MIN_CALL_SIZE_BYTES) {
+            return VaultFileState.INVALID_MEDIA
+        }
+
+        // Bounded prefix inspection (<= 768 bytes, no full-file SHA calculation)
+        val header = ByteArray(HEADER_INSPECTION_BYTES)
+        val bytesRead = try {
+            FileInputStream(file).use { it.read(header) }
+        } catch (_: Exception) {
+            return VaultFileState.UNREADABLE
+        }
+
+        if (bytesRead < 8) {
+            return VaultFileState.INVALID_MEDIA
+        }
+
+        val inspection = MediaFileValidator.inspectHeaderBytes(header, bytesRead)
+        return when (inspection) {
+            is MediaFileValidator.HeaderValidationResult.ValidMedia -> VaultFileState.AVAILABLE
+            is MediaFileValidator.HeaderValidationResult.Invalid -> VaultFileState.INVALID_MEDIA
+        }
+    }
+
+    fun inspectMediaFile(file: File, expectedSizeBytes: Long, downloadStatus: DownloadStatus): VaultFileState {
+        if (!file.exists()) {
+            return VaultFileState.MISSING
+        }
+
+        if (downloadStatus != DownloadStatus.COMPLETED) {
+            return VaultFileState.NOT_READY
+        }
+
+        val ext = file.extension.lowercase()
+        if (ext == "part" || ext == "tmp" || file.name.endsWith(".part") || file.name.endsWith(".tmp")) {
+            return VaultFileState.INVALID_MEDIA
+        }
+
+        if (!file.isFile || !file.canRead()) {
+            return VaultFileState.UNREADABLE
+        }
+
+        val actualLength = file.length()
+        if (expectedSizeBytes > 0L && actualLength != expectedSizeBytes) {
+            return VaultFileState.SIZE_MISMATCH
+        }
+
+        if (actualLength < MIN_MEDIA_SIZE_BYTES) {
+            return VaultFileState.INVALID_MEDIA
+        }
+
+        // Bounded prefix inspection (<= 768 bytes, no full-file SHA calculation)
+        val header = ByteArray(HEADER_INSPECTION_BYTES)
+        val bytesRead = try {
+            FileInputStream(file).use { it.read(header) }
+        } catch (_: Exception) {
+            return VaultFileState.UNREADABLE
+        }
+
+        if (bytesRead < 8) {
+            return VaultFileState.INVALID_MEDIA
+        }
+
+        val inspection = MediaFileValidator.inspectHeaderBytes(header, bytesRead)
+        return when (inspection) {
+            is MediaFileValidator.HeaderValidationResult.ValidMedia -> VaultFileState.AVAILABLE
+            is MediaFileValidator.HeaderValidationResult.Invalid -> VaultFileState.INVALID_MEDIA
+        }
+    }
+}
+
 class DefaultVaultItemEvaluator(
     private val fileResolver: (String) -> File = { File(it) }
 ) : VaultItemEvaluator {
@@ -114,33 +208,7 @@ class DefaultVaultItemEvaluator(
         }
 
         val file = fileResolver(path)
-        if (!file.exists()) {
-            return VaultFileState.MISSING
-        }
-
-        if (!file.isFile || !file.canRead()) {
-            return VaultFileState.UNREADABLE
-        }
-
-        if (session.fileSizeBytes > 0L && file.length() != session.fileSizeBytes) {
-            return VaultFileState.SIZE_MISMATCH
-        }
-
-        if (file.length() < 8L) {
-            return VaultFileState.INVALID_MEDIA
-        }
-
-        val validationResult = MediaFileValidator.validateFile(file, ValidationContext.CANONICAL_MEDIA)
-        return when (validationResult) {
-            is FileValidationResult.Valid -> VaultFileState.AVAILABLE
-            is FileValidationResult.Invalid -> {
-                if (AudioFileInspector.isValidM4AContainerHeader(file)) {
-                    VaultFileState.AVAILABLE
-                } else {
-                    VaultFileState.INVALID_MEDIA
-                }
-            }
-        }
+        return VaultFileAvailabilityInspector.inspectCallFile(file, session.fileSizeBytes)
     }
 
     private fun evaluateMediaFileState(item: MediaItem, path: String?): VaultFileState {
@@ -149,27 +217,7 @@ class DefaultVaultItemEvaluator(
         }
 
         val file = fileResolver(path)
-        if (!file.exists()) {
-            return VaultFileState.MISSING
-        }
-
-        if (item.downloadStatus != DownloadStatus.COMPLETED) {
-            return VaultFileState.UNREADABLE
-        }
-
-        if (!file.isFile || !file.canRead()) {
-            return VaultFileState.UNREADABLE
-        }
-
-        if (item.fileSizeBytes > 0L && file.length() != item.fileSizeBytes) {
-            return VaultFileState.SIZE_MISMATCH
-        }
-
-        val validationResult = MediaFileValidator.validateFile(file, ValidationContext.CANONICAL_MEDIA)
-        return when (validationResult) {
-            is FileValidationResult.Valid -> VaultFileState.AVAILABLE
-            is FileValidationResult.Invalid -> VaultFileState.INVALID_MEDIA
-        }
+        return VaultFileAvailabilityInspector.inspectMediaFile(file, item.fileSizeBytes, item.downloadStatus)
     }
 
     private fun resolveCallPrimaryAction(session: CallSession, fileState: VaultFileState): VaultPrimaryAction {

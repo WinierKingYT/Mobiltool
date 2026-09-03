@@ -161,6 +161,7 @@ fun LibraryScreen(
                             val call = item.session
                             val (badgeText, badgeSeverity) = when (item.fileState) {
                                 VaultFileState.AVAILABLE -> "AVAILABLE" to BadgeSeverity.SUCCESS
+                                VaultFileState.NOT_READY -> "NOT READY" to BadgeSeverity.WARNING
                                 VaultFileState.MISSING -> "MISSING" to BadgeSeverity.DANGER
                                 VaultFileState.INVALID_MEDIA -> "INVALID MEDIA" to BadgeSeverity.DANGER
                                 VaultFileState.SIZE_MISMATCH -> "SIZE MISMATCH" to BadgeSeverity.WARNING
@@ -216,6 +217,7 @@ fun LibraryScreen(
                             val media = item.item
                             val (badgeText, badgeSeverity) = when (item.fileState) {
                                 VaultFileState.AVAILABLE -> "AVAILABLE" to BadgeSeverity.SUCCESS
+                                VaultFileState.NOT_READY -> "NOT READY" to BadgeSeverity.WARNING
                                 VaultFileState.MISSING -> "MISSING" to BadgeSeverity.DANGER
                                 VaultFileState.INVALID_MEDIA -> "INVALID MEDIA" to BadgeSeverity.DANGER
                                 VaultFileState.SIZE_MISMATCH -> "SIZE MISMATCH" to BadgeSeverity.WARNING
