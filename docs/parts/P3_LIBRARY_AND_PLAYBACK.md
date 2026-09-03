@@ -1,5 +1,7 @@
 # P3 — Library & Playback
 
+Status: ACTIVE / IN_PROGRESS
+
 ## Goal
 Unified media vault and audio/video playback engine.
 
@@ -9,10 +11,10 @@ Unified media vault and audio/video playback engine.
 3. Multi-criteria search and reactive filtering (`ALL`, `CALLS`, `MEDIA`, `TRANSCRIPTS`).
 4. File existence & integrity checks.
 
-## Exit Gate
+## Exit Gate (Pending P3 Verification)
 ```text
-[x] Real audio playback with accurate progress
-[x] Video viewer with Media3 ExoPlayer
-[x] Reactive Room DB flow combine
-[x] Dynamic search and category filtering
+[ ] Real audio playback with accurate progress
+[ ] Video viewer with Media3 ExoPlayer
+[ ] Reactive Room DB flow combine
+[ ] Dynamic search and category filtering
 ```
