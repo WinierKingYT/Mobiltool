@@ -38,7 +38,8 @@ data class DownloadedMediaResult(
     val outputFilePath: String,
     val durationMs: Long,
     val fileSizeBytes: Long,
-    val mimeType: String
+    val mimeType: String,
+    val mediaKind: DetectedMediaKind = DetectedMediaKind.UNKNOWN
 )
 
 interface MediaExtractor {

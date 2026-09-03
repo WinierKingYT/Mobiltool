@@ -54,6 +54,7 @@ class RealHttpStreamDownloaderTest {
                     responseBodyStream = stream,
                     contentLength = contentLength,
                     contentType = contentType,
+                    requestedUrl = initialUrl,
                     finalUrl = initialUrl,
                     responseCode = responseCode,
                     redirectCount = 0
@@ -63,7 +64,7 @@ class RealHttpStreamDownloaderTest {
     }
 
     @Test
-    fun successfulSmallMp4Download_validatesContent_computesHash_andCommitsCanonically() = runTest {
+    fun successfulSmallMp4Download_validatesContent_computesHash_andCommitsAtomically() = runTest {
         val payload = createValidMp4Payload()
         val fakeEngine = createFakeEngine(payload)
         val downloader = RealHttpStreamDownloader(dnsLookup = publicDns, transportEngine = fakeEngine)
@@ -85,9 +86,13 @@ class RealHttpStreamDownloaderTest {
         assertThat(success.file.exists()).isTrue()
         assertThat(success.file.name).isEqualTo("video.mp4")
         assertThat(success.containerType).isEqualTo(DetectedContainer.MP4_ISO_BMFF)
+        assertThat(success.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN) // generic isom track is unproven
         assertThat(success.detectedMimeType).isEqualTo("video/mp4")
         assertThat(success.fileSizeBytes).isEqualTo(payload.size.toLong())
         assertThat(success.sha256Hex).isNotEmpty()
+        assertThat(success.requestedUrl).isEqualTo("https://cdn.example.com/video.mp4")
+        assertThat(success.responseCode).isEqualTo(200)
+        assertThat(success.commitMethod).contains("ATOMIC_MOVE")
         assertThat(progressReported).isTrue()
 
         // Staging file must NOT remain
@@ -96,7 +101,47 @@ class RealHttpStreamDownloaderTest {
     }
 
     @Test
-    fun successfulSmallAudioMp3Download_succeedsWithAudioMime() = runTest {
+    fun commitFailure_failsClosed_preservesStaging_andLeavesCanonicalAbsent() = runTest {
+        val payload = createValidMp4Payload()
+        val fakeEngine = createFakeEngine(payload)
+
+        // Inject failing committer (simulating unsupported ATOMIC_MOVE)
+        val failingCommitter = object : FileCommitter {
+            override fun commit(stagingFile: File, destinationFile: File, overwrite: Boolean): Boolean = false
+            override fun commitMethodName(): String = "FailingAtomicCommitter"
+        }
+
+        val downloader = RealHttpStreamDownloader(
+            dnsLookup = publicDns,
+            transportEngine = fakeEngine,
+            fileCommitter = failingCommitter
+        )
+        val destFile = File(tempFolder.root, "failed_commit.mp4")
+
+        val result = downloader.download(
+            downloadId = "fail-comm-1",
+            sourceUrl = "https://cdn.example.com/video.mp4",
+            destinationFile = destFile,
+            onProgress = {}
+        )
+
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.code).isEqualTo(ErrorCode.STORAGE_ERROR)
+        assertThat(error.message).contains("Atomic commit to canonical destination failed")
+        assertThat(error.message).contains("staging file preserved")
+
+        // Canonical destination must NOT exist
+        assertThat(destFile.exists()).isFalse()
+
+        // Staging file MUST be preserved for recovery/diagnostics
+        val staging = File(tempFolder.root, "failed_commit.mp4.part")
+        assertThat(staging.exists()).isTrue()
+        assertThat(staging.length()).isEqualTo(payload.size.toLong())
+    }
+
+    @Test
+    fun successfulSmallAudioMp3Download_succeedsWithAudioMimeAndAudioKind() = runTest {
         val payload = createValidMp3Payload()
         val fakeEngine = createFakeEngine(payload, contentType = "audio/mpeg")
         val downloader = RealHttpStreamDownloader(dnsLookup = publicDns, transportEngine = fakeEngine)
@@ -112,6 +157,7 @@ class RealHttpStreamDownloaderTest {
         assertThat(result).isInstanceOf(AppResult.Success::class.java)
         val success = (result as AppResult.Success).data
         assertThat(success.containerType).isEqualTo(DetectedContainer.MP3)
+        assertThat(success.mediaKind).isEqualTo(DetectedMediaKind.AUDIO)
         assertThat(success.detectedMimeType).isEqualTo("audio/mpeg")
     }
 
@@ -132,6 +178,7 @@ class RealHttpStreamDownloaderTest {
         assertThat(result).isInstanceOf(AppResult.Success::class.java)
         val success = (result as AppResult.Success).data
         assertThat(success.fileSizeBytes).isEqualTo(payload.size.toLong())
+        assertThat(success.expectedContentLength).isEqualTo(-1L)
         assertThat(destFile.exists()).isTrue()
     }
 
@@ -316,6 +363,7 @@ class RealHttpStreamDownloaderTest {
                             responseBodyStream = ByteArrayInputStream(payload),
                             contentLength = payload.size.toLong(),
                             contentType = "video/mp4",
+                            requestedUrl = initialUrl,
                             finalUrl = initialUrl,
                             responseCode = 206,
                             redirectCount = 0

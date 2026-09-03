@@ -15,17 +15,49 @@ enum class DestinationCollisionPolicy {
     OVERWRITE_CRASH_SAFE
 }
 
+interface FileCommitter {
+    fun commit(stagingFile: File, destinationFile: File, overwrite: Boolean): Boolean
+    fun commitMethodName(): String
+}
+
+object StandardAtomicFileCommitter : FileCommitter {
+    override fun commit(stagingFile: File, destinationFile: File, overwrite: Boolean): Boolean {
+        val options = if (overwrite) {
+            arrayOf(StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } else {
+            arrayOf(StandardCopyOption.ATOMIC_MOVE)
+        }
+        return try {
+            Files.move(stagingFile.toPath(), destinationFile.toPath(), *options)
+            true
+        } catch (e: Exception) {
+            // Strict Invariant (P2-DIRECT-FINAL-01):
+            // Never fall back to non-atomic renameTo or copy. Fail closed.
+            false
+        }
+    }
+
+    override fun commitMethodName(): String = "StandardCopyOption.ATOMIC_MOVE"
+}
+
 data class DownloadedFileInfo(
     val file: File,
     val fileSizeBytes: Long,
     val sha256Hex: String,
     val containerType: DetectedContainer,
-    val detectedMimeType: String
+    val mediaKind: DetectedMediaKind,
+    val detectedMimeType: String,
+    val requestedUrl: String,
+    val finalResolvedUrl: String,
+    val responseCode: Int,
+    val expectedContentLength: Long,
+    val commitMethod: String
 )
 
 class RealHttpStreamDownloader(
     private val dnsLookup: DnsLookup = SystemDnsLookup,
-    private val transportEngine: SafeHttpTransportEngine = SafeHttpTransport
+    private val transportEngine: SafeHttpTransportEngine = SafeHttpTransport,
+    private val fileCommitter: FileCommitter = StandardAtomicFileCommitter
 ) {
 
     private val activeDownloads = ConcurrentHashMap<String, Boolean>()
@@ -153,7 +185,7 @@ class RealHttpStreamDownloader(
                 )
             }
 
-            // 4. Content Validation on Staging File (P2-DIRECT-FIX-01 & P2-DIRECT-FIX-05)
+            // 4. Content Validation on Staging File (P2-DIRECT-FIX-01 & P2-DIRECT-FINAL-02)
             val stagingValidation = MediaFileValidator.validateFile(
                 stagingPartFile,
                 context = ValidationContext.STAGING_PAYLOAD
@@ -170,26 +202,15 @@ class RealHttpStreamDownloader(
                 }
             }
 
-            // 5. True Crash-Safe Commit (P2-DIRECT-FIX-02)
-            // Sequence: VALID STAGING -> FINALIZATION PREP -> ATOMIC COMMIT -> CANONICAL FILE VISIBLE
-            val moveOptions = if (collisionPolicy == DestinationCollisionPolicy.OVERWRITE_CRASH_SAFE) {
-                arrayOf(StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
-            } else {
-                arrayOf(StandardCopyOption.ATOMIC_MOVE)
-            }
-
-            val commitSuccess = try {
-                Files.move(stagingPartFile.toPath(), destinationFile.toPath(), *moveOptions)
-                true
-            } catch (e: Exception) {
-                // Fallback to renameTo if Files.move ATOMIC_MOVE fails
-                stagingPartFile.renameTo(destinationFile)
-            }
+            // 5. Strictly Atomic Commit (P2-DIRECT-FINAL-01)
+            // Sequence: VALID STAGING -> FINALIZATION PREP -> ATOMIC MOVE -> CANONICAL FILE VISIBLE
+            val overwrite = collisionPolicy == DestinationCollisionPolicy.OVERWRITE_CRASH_SAFE
+            val commitSuccess = fileCommitter.commit(stagingPartFile, destinationFile, overwrite)
 
             if (!commitSuccess || !destinationFile.exists()) {
-                // Fail closed: Never perform a non-atomic in-place copy to canonical path.
+                // Fail closed: Do NOT fallback to non-atomic renameTo/copy. Preserve staging.
                 return@withContext AppResult.Error(
-                    message = "Atomic commit to canonical destination failed; staging file preserved at ${stagingPartFile.name}",
+                    message = "Atomic commit to canonical destination failed (${fileCommitter.commitMethodName()}); staging file preserved at ${stagingPartFile.name}",
                     code = ErrorCode.STORAGE_ERROR
                 )
             }
@@ -224,7 +245,13 @@ class RealHttpStreamDownloader(
                     fileSizeBytes = validResult.fileSizeBytes,
                     sha256Hex = validResult.sha256Hex,
                     containerType = validResult.containerType,
-                    detectedMimeType = validResult.detectedMimeType
+                    mediaKind = validResult.mediaKind,
+                    detectedMimeType = validResult.detectedMimeType,
+                    requestedUrl = safeResponse.requestedUrl,
+                    finalResolvedUrl = safeResponse.finalUrl,
+                    responseCode = safeResponse.responseCode,
+                    expectedContentLength = expectedContentLength,
+                    commitMethod = fileCommitter.commitMethodName()
                 )
             )
 

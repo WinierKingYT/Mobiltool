@@ -54,7 +54,7 @@ class DefaultMediaExtractor(
                                     MediaFormatOption(
                                         formatId = "direct-orig",
                                         ext = ext,
-                                        resolution = if (isAudio) "Direct Audio Stream" else "Direct Video Stream",
+                                        resolution = if (isAudio) "Direct Audio Stream" else "Direct Stream",
                                         note = probe.contentType ?: "Direct HTTP Media",
                                         fileSizeBytes = size,
                                         isAudioOnly = isAudio
@@ -108,7 +108,8 @@ class DefaultMediaExtractor(
                         outputFilePath = fileInfo.file.absolutePath,
                         durationMs = 0L,
                         fileSizeBytes = fileInfo.fileSizeBytes,
-                        mimeType = fileInfo.detectedMimeType
+                        mimeType = fileInfo.detectedMimeType,
+                        mediaKind = fileInfo.mediaKind
                     )
                 )
             }

@@ -20,12 +20,20 @@ enum class DetectedContainer {
     UNKNOWN
 }
 
+enum class DetectedMediaKind {
+    AUDIO,
+    VIDEO,
+    AUDIO_VIDEO,
+    UNKNOWN
+}
+
 sealed interface FileValidationResult {
     data class Valid(
         val fileSizeBytes: Long,
         val extension: String,
         val sha256Hex: String,
         val containerType: DetectedContainer,
+        val mediaKind: DetectedMediaKind,
         val detectedMimeType: String
     ) : FileValidationResult
 
@@ -95,8 +103,8 @@ object MediaFileValidator {
             }
         }
 
-        // 3. Container Magic Bytes Verification & Media Type Truth (P2-DIRECT-FIX-05)
-        val (container, mimeType) = detectContainerAndMime(header, bytesRead)
+        // 3. Container Magic Bytes Verification & Media Type Truth (P2-DIRECT-FINAL-02)
+        val detection = detectContainerAndMediaKind(header, bytesRead)
             ?: return FileValidationResult.Invalid("Unrecognized binary container header; not a valid MP4/WebM/MKV/MP3/AAC/OGG/WAV/FLAC/TS media stream")
 
         val sha256 = calculateSha256(file)
@@ -105,12 +113,19 @@ object MediaFileValidator {
             fileSizeBytes = size,
             extension = ext,
             sha256Hex = sha256,
-            containerType = container,
-            detectedMimeType = mimeType
+            containerType = detection.container,
+            mediaKind = detection.mediaKind,
+            detectedMimeType = detection.mimeType
         )
     }
 
-    private fun detectContainerAndMime(header: ByteArray, length: Int): Pair<DetectedContainer, String>? {
+    private data class ContainerDetection(
+        val container: DetectedContainer,
+        val mediaKind: DetectedMediaKind,
+        val mimeType: String
+    )
+
+    private fun detectContainerAndMediaKind(header: ByteArray, length: Int): ContainerDetection? {
         if (length < 4) return null
 
         // 1. ISO BMFF / MP4 / M4A / MOV (ftyp box at offset 4)
@@ -121,12 +136,18 @@ object MediaFileValidator {
             header[7] == 'p'.code.toByte()
         ) {
             val majorBrand = String(header, 8, 4, Charsets.ISO_8859_1).trim().lowercase()
-            val mime = when {
-                majorBrand in listOf("m4a", "m4b", "m4p", "f4a", "f4b") -> "audio/mp4"
-                majorBrand in listOf("qt", "moov") -> "video/quicktime"
-                else -> "video/mp4"
+            return when {
+                majorBrand in listOf("m4a", "m4b", "m4p", "f4a", "f4b") -> {
+                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.AUDIO, "audio/mp4")
+                }
+                majorBrand in listOf("qt", "moov") -> {
+                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.UNKNOWN, "video/quicktime")
+                }
+                // Generic ISO-BMFF (isom, mp41, mp42, dash, avc1): Track inspection not performed, kind is UNKNOWN
+                else -> {
+                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.UNKNOWN, "video/mp4")
+                }
             }
-            return Pair(DetectedContainer.MP4_ISO_BMFF, mime)
         }
 
         // 2. Matroska / WebM: 0x1A 0x45 0xDF 0xA3
@@ -137,7 +158,8 @@ object MediaFileValidator {
         ) {
             val headerAscii = String(header, 0, length, Charsets.ISO_8859_1).lowercase()
             val mime = if (headerAscii.contains("webm")) "video/webm" else "video/x-matroska"
-            return Pair(DetectedContainer.MATROSKA_WEBM, mime)
+            // Without track parser evidence, media kind is UNKNOWN
+            return ContainerDetection(DetectedContainer.MATROSKA_WEBM, DetectedMediaKind.UNKNOWN, mime)
         }
 
         // 3. MP3 with ID3v2 tag: "ID3" (0x49 0x44 0x33)
@@ -145,14 +167,14 @@ object MediaFileValidator {
             header[1] == 0x44.toByte() &&
             header[2] == 0x33.toByte()
         ) {
-            return Pair(DetectedContainer.MP3, "audio/mpeg")
+            return ContainerDetection(DetectedContainer.MP3, DetectedMediaKind.AUDIO, "audio/mpeg")
         }
 
         // 4. MP3 without ID3 tag (MPEG audio sync word: 0xFF 0xFB, 0xFF 0xF3, 0xFF 0xF2)
         val b0 = header[0].toInt() and 0xFF
         val b1 = header[1].toInt() and 0xFF
         if (b0 == 0xFF && (b1 and 0xE0) == 0xE0 && (b1 and 0x06) != 0x00) {
-            return Pair(DetectedContainer.MP3, "audio/mpeg")
+            return ContainerDetection(DetectedContainer.MP3, DetectedMediaKind.AUDIO, "audio/mpeg")
         }
 
         // 5. Ogg Container: "OggS" (0x4F 0x67 0x67 0x53)
@@ -161,7 +183,8 @@ object MediaFileValidator {
             header[2] == 0x67.toByte() &&
             header[3] == 0x53.toByte()
         ) {
-            return Pair(DetectedContainer.OGG, "audio/ogg")
+            // Ogg container can be Vorbis audio, Opus audio, Theora video, etc. Media kind is UNKNOWN without codec header check
+            return ContainerDetection(DetectedContainer.OGG, DetectedMediaKind.UNKNOWN, "audio/ogg")
         }
 
         // 6. RIFF WAV Container: "RIFF" .... "WAVE"
@@ -175,7 +198,7 @@ object MediaFileValidator {
             header[10] == 'V'.code.toByte() &&
             header[11] == 'E'.code.toByte()
         ) {
-            return Pair(DetectedContainer.WAV, "audio/wav")
+            return ContainerDetection(DetectedContainer.WAV, DetectedMediaKind.AUDIO, "audio/wav")
         }
 
         // 7. FLAC: "fLaC" (0x66 0x4C 0x61 0x43)
@@ -184,17 +207,17 @@ object MediaFileValidator {
             header[2] == 0x61.toByte() &&
             header[3] == 0x43.toByte()
         ) {
-            return Pair(DetectedContainer.FLAC, "audio/flac")
+            return ContainerDetection(DetectedContainer.FLAC, DetectedMediaKind.AUDIO, "audio/flac")
         }
 
-        // 8. MPEG-TS (P2-DIRECT-FIX-05): Check consecutive 188-byte packet sync markers (0x47)
+        // 8. MPEG-TS: Check consecutive 188-byte packet sync markers (0x47)
         if (length >= 565 &&
             header[0] == 0x47.toByte() &&
             header[188] == 0x47.toByte() &&
             header[376] == 0x47.toByte() &&
             header[564] == 0x47.toByte()
         ) {
-            return Pair(DetectedContainer.MPEG_TS, "video/mp2t")
+            return ContainerDetection(DetectedContainer.MPEG_TS, DetectedMediaKind.UNKNOWN, "video/mp2t")
         }
 
         return null

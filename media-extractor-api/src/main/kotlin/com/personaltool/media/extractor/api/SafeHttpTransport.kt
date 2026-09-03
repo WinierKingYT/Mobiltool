@@ -17,6 +17,7 @@ data class SafeHttpResponse(
     val responseBodyStream: InputStream,
     val contentLength: Long,
     val contentType: String?,
+    val requestedUrl: String,
     val finalUrl: String,
     val responseCode: Int,
     val redirectCount: Int
@@ -24,6 +25,16 @@ data class SafeHttpResponse(
     override fun close() {
         runCatching { responseBodyStream.close() }
         runCatching { response?.close() }
+    }
+}
+
+/**
+ * Strict DNS implementation bound exclusively to an approved, pre-validated IP address list (P2-DIRECT-FINAL-03).
+ * Eliminates DNS TOCTOU / Rebinding vulnerabilities without disabling TLS certificate/SNI verification.
+ */
+class ValidatedDns(private val approvedIps: List<InetAddress>) : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        return approvedIps
     }
 }
 
@@ -48,7 +59,7 @@ object SafeHttpTransport : SafeHttpTransportEngine {
     /**
      * Executes an HTTP request with:
      * 1. Pre-connection DNS validation against SSRF / private IP policies.
-     * 2. Strict DNS binding to the pre-validated IP address set (eliminating DNS TOCTOU / Rebinding attacks).
+     * 2. Strict DNS binding via ValidatedDns to the pre-validated IP address set (eliminating DNS TOCTOU / Rebinding attacks).
      * 3. Manual hop-by-hop redirect re-validation with cycle detection and downgrade protection.
      */
     override fun openSafeConnection(
@@ -86,12 +97,7 @@ object SafeHttpTransport : SafeHttpTransportEngine {
 
             // 2. Build OkHttpClient bound to approved DNS resolution (DNS TOCTOU mitigation)
             val client = OkHttpClient.Builder()
-                .dns(object : Dns {
-                    override fun lookup(hostname: String): List<InetAddress> {
-                        // Strict binding: Only return approved, pre-validated IPs for this host
-                        return approvedIps
-                    }
-                })
+                .dns(ValidatedDns(approvedIps))
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
@@ -178,6 +184,7 @@ object SafeHttpTransport : SafeHttpTransportEngine {
                     responseBodyStream = stream,
                     contentLength = contentLength,
                     contentType = contentType,
+                    requestedUrl = initialUrl,
                     finalUrl = currentUrl,
                     responseCode = responseCode,
                     redirectCount = redirectCount

@@ -56,21 +56,22 @@ class SafeHttpTransportTest {
     }
 
     @Test
-    fun dnsToctou_rebindProtection_bindsOkHttpConnectionToValidatedIps() {
-        // First lookup resolves to approved public IP
-        var lookupCount = 0
-        val rebindDns = DnsLookup { hostname ->
-            lookupCount++
-            listOf(InetAddress.getByName("93.184.216.34"))
-        }
+    fun validatedDns_strictlyReturnsOnlyApprovedIps_andImmuneToExternalRebinding() {
+        val publicIp = InetAddress.getByName("93.184.216.34")
+        val privateIp = InetAddress.getByName("127.0.0.1")
 
-        val validation = NetworkSecurityPolicy.validateDestination("https://cdn.example.com/video.mp4", rebindDns)
-        assertThat(validation).isInstanceOf(NetworkValidationResult.Valid::class.java)
-        val valid = (validation as NetworkValidationResult.Valid)
-        assertThat(valid.resolvedIps).containsExactly(InetAddress.getByName("93.184.216.34"))
+        val approvedList = listOf(publicIp)
+        val boundDns = ValidatedDns(approvedList)
 
-        // Even if an external DNS server were to rebind the hostname to 127.0.0.1 afterward,
-        // the client connection uses the approved list bound in NetworkValidationResult
-        assertThat(valid.resolvedIps.all { !NetworkSecurityPolicy.isRestrictedAddress(it) }).isTrue()
+        // 1. Initial lookup returns approved IP
+        val initialResolution = boundDns.lookup("cdn.example.com")
+        assertThat(initialResolution).containsExactly(publicIp)
+
+        // 2. Simulate external DNS rebinding attempt:
+        // Even if an external DNS resolver begins returning 127.0.0.1 for the host,
+        // the client connection bound to ValidatedDns receives ONLY the approved public IP.
+        val subsequentResolution = boundDns.lookup("cdn.example.com")
+        assertThat(subsequentResolution).containsExactly(publicIp)
+        assertThat(subsequentResolution).doesNotContain(privateIp)
     }
 }

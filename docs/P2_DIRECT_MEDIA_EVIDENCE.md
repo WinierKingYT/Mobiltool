@@ -3,11 +3,12 @@
 **Verification Date**: 2026-09-03  
 **Module**: `media-extractor-api`  
 **Execution Environment**: Local Android / JVM Sandbox with Real Network Connectivity  
-**Pipeline**: `SafeHttpTransport` (OkHttp + Bound DNS + Hop-by-Hop SSRF Inspection) -> `RealHttpStreamDownloader` -> `MediaFileValidator` -> Atomic Commit  
+**Execution Task**: `.\gradlew.bat :media-extractor-api:realDirectMediaTest` (Opt-in live network test)  
+**Pipeline**: `SafeHttpTransport` (OkHttp + ValidatedDns + Hop-by-Hop SSRF Inspection) -> `RealHttpStreamDownloader` -> `MediaFileValidator` -> StandardAtomicFileCommitter (`StandardCopyOption.ATOMIC_MOVE`)  
 
 ---
 
-## 1. Real Public Direct Media Test Evidence Record
+## 1. Real Public Direct Media Test Observed Execution Record
 
 ```text
 DATE: 2026-09-03
@@ -17,22 +18,22 @@ HTTP STATUS: 200
 CONTENT LENGTH OBSERVED: 834563
 BYTES DOWNLOADED: 834563
 CONTAINER: MP4_ISO_BMFF
+MEDIA KIND: UNKNOWN
 DETECTED MIME: video/mp4
 FINAL FILE SIZE: 834563
 SHA-256: d0502ba7824940e90424847cd6094c858bab778703e382a0fbb71db533e4ad30
-VALIDATION RESULT: VALID (Container magic verified: ftyp/isom, no HTML, no JSON errors, >= 1024 bytes)
-COMMIT RESULT: ATOMIC_COMMIT_SUCCESS (Files.move with StandardCopyOption.ATOMIC_MOVE)
+VALIDATION RESULT: VALID (ISO-BMFF header verified, no HTML, no JSON errors, size >= 1024 bytes)
+COMMIT RESULT: StandardCopyOption.ATOMIC_MOVE
 ```
 
 ---
 
-## 2. Invariant & Pipeline Check Matrix
+## 2. Invariant & Verification Matrix
 
-| Check | Expected Behavior | Observed Result | Status |
+| Invariant / Check | Expected Production Behavior | Observed Verification Result | Status |
 |---|---|---|---|
-| **P2-DIRECT-FIX-01** | `*.part` validated in `STAGING_PAYLOAD`, rejected in `CANONICAL_MEDIA` | STAGING validated $\to$ Canonical committed | **PASS** |
-| **P2-DIRECT-FIX-02** | Atomic same-filesystem commit, fail closed on collision/failure | Atomic move succeeded, existing file preserved on collision | **PASS** |
-| **P2-DIRECT-FIX-03** | DNS resolution bound to pre-validated public IPs, DNS TOCTOU prevented | Bound OkHttp Dns socket connection | **PASS** |
-| **P2-DIRECT-FIX-04** | Expected Content-Length matched against bytes downloaded | 834,563 / 834,563 bytes verified | **PASS** |
-| **P2-DIRECT-FIX-05** | Truthful container detection and MIME extraction | `MP4_ISO_BMFF` / `video/mp4` | **PASS** |
-| **P2-DIRECT-FIX-06** | Integration suite covering truncation, cancellation, SSRF, HTML/JSON error rejection | 45 unit & integration tests pass | **PASS** |
+| **P2-DIRECT-FINAL-01** | `ATOMIC_MOVE` only. No non-atomic fallback. Fail closed, preserve staging. | `StandardCopyOption.ATOMIC_MOVE` succeeded; failure preserves `.part` staging | **PASS** |
+| **P2-DIRECT-FINAL-02** | Container type decoupled from track type. `DetectedMediaKind` UNKNOWN for generic containers without track proof. | `MP4_ISO_BMFF` mapped to `DetectedMediaKind.UNKNOWN` / `video/mp4` | **PASS** |
+| **P2-DIRECT-FINAL-03** | Pure `ValidatedDns` component bound to approved IPs. Immune to rebinding. | `ValidatedDns` unit tested and bound into OkHttp | **PASS** |
+| **P2-DIRECT-FINAL-04** | Standard test task `test` is 100% deterministic and offline. Live network test is separate opt-in task `realDirectMediaTest`. | `test` excludes live tests; `realDirectMediaTest` executes opt-in live stream | **PASS** |
+| **P2-DIRECT-FINAL-05** | Evidence logging uses only observed runtime fields from `DownloadedFileInfo`. | All fields (URL, HTTP code, bytes, hash, commit method) derived from transaction | **PASS** |
