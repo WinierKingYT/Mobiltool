@@ -9,8 +9,7 @@ import com.personaltool.core.model.media.MediaSource
 import com.personaltool.core.model.media.MediaType
 import com.personaltool.media.extractor.api.DefaultMediaExtractor
 import com.personaltool.media.extractor.api.DownloadRequest
-import com.personaltool.media.extractor.api.FileValidationResult
-import com.personaltool.media.extractor.api.MediaFileValidator
+import com.personaltool.media.extractor.api.DownloadedMediaResult
 import com.personaltool.media.extractor.api.MediaProbeResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -76,23 +75,19 @@ class RealHttpMediaDownloader(private val context: Context) {
             onProgress(progress.percent, progress.bytesDownloaded)
         }) {
             is AppResult.Success -> {
-                // Post-process file validation: Ensure non-zero bytes and valid container
-                val validation = MediaFileValidator.validateFile(outputFile)
-                if (validation is FileValidationResult.Invalid) {
-                    outputFile.delete()
-                    return@withContext AppResult.Error("Media validation failed: ${validation.reason}")
-                }
+                val mediaResult: DownloadedMediaResult = result.data
+                val completedFile = File(mediaResult.outputFilePath)
 
                 val completedItem = MediaItem(
                     id = downloadId,
                     sourceUrl = probe.url,
                     title = probe.title,
-                    localFilePath = outputFile.absolutePath,
+                    localFilePath = completedFile.absolutePath,
                     mediaType = if (isAudio) MediaType.AUDIO_ONLY else MediaType.VIDEO,
                     sourcePlatform = probe.sourcePlatform,
                     formatSelected = selectedFormat.formatId,
                     resolution = selectedFormat.resolution,
-                    fileSizeBytes = outputFile.length(),
+                    fileSizeBytes = mediaResult.fileSizeBytes,
                     downloadStatus = DownloadStatus.COMPLETED,
                     downloadProgressPercent = 100
                 )

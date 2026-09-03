@@ -3,10 +3,45 @@ package com.personaltool.media.extractor.api
 import com.personaltool.core.model.media.MediaSource
 import java.net.URI
 
+sealed interface UrlValidationResult {
+    data class Valid(
+        val normalizedUrl: String,
+        val platform: MediaSource,
+        val host: String,
+        val platformContentId: String? = null
+    ) : UrlValidationResult
+
+    data class Invalid(
+        val reason: String,
+        val isSsrfViolation: Boolean = false
+    ) : UrlValidationResult
+}
+
 object UrlClassifier {
 
+    private val YOUTUBE_HOSTS = setOf(
+        "youtube.com",
+        "www.youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "youtu.be"
+    )
+
+    private val INSTAGRAM_HOSTS = setOf(
+        "instagram.com",
+        "www.instagram.com"
+    )
+
+    private val X_TWITTER_HOSTS = setOf(
+        "twitter.com",
+        "www.twitter.com",
+        "mobile.twitter.com",
+        "x.com",
+        "www.x.com"
+    )
+
     private val YOUTUBE_REGEX = Regex(
-        """^(https?://)?(www\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]{11}).*""",
+        """^(https?://)?(www\.|m\.|music\.)?(youtube\.com|youtu\.be)/(watch\?v=|shorts/|embed/)?([a-zA-Z0-9_-]{11}).*""",
         RegexOption.IGNORE_CASE
     )
 
@@ -16,47 +51,52 @@ object UrlClassifier {
     )
 
     private val X_TWITTER_REGEX = Regex(
-        """^(https?://)?(www\.)?(twitter\.com|x\.com)/[a-zA-Z0-9_]+/status/([0-9]+).*""",
+        """^(https?://)?(www\.|mobile\.)?(twitter\.com|x\.com)/[a-zA-Z0-9_]+/status/([0-9]+).*""",
         RegexOption.IGNORE_CASE
     )
 
-    fun validateAndNormalize(rawUrl: String): UrlValidationResult {
-        val trimmed = rawUrl.trim()
-        if (trimmed.isBlank()) {
-            return UrlValidationResult.Invalid("URL cannot be empty")
+    fun validateAndNormalize(
+        rawUrl: String,
+        dnsLookup: DnsLookup = SystemDnsLookup
+    ): UrlValidationResult {
+        when (val netResult = NetworkSecurityPolicy.validateDestination(rawUrl, dnsLookup)) {
+            is NetworkValidationResult.Blocked -> {
+                return UrlValidationResult.Invalid(
+                    reason = netResult.reason,
+                    isSsrfViolation = netResult.isSsrfViolation
+                )
+            }
+            is NetworkValidationResult.Valid -> {
+                val canonicalHost = netResult.canonicalHost
+                val platform = classifyHostAndUrl(canonicalHost, netResult.normalizedUrl)
+                val contentId = extractPlatformId(netResult.normalizedUrl, platform)
+
+                return UrlValidationResult.Valid(
+                    normalizedUrl = netResult.normalizedUrl,
+                    platform = platform,
+                    host = canonicalHost,
+                    platformContentId = contentId
+                )
+            }
         }
-
-        val uri = runCatching { URI(trimmed) }.getOrNull()
-            ?: return UrlValidationResult.Invalid("Malformed URL syntax")
-
-        val scheme = uri.scheme?.lowercase()
-        if (scheme != "http" && scheme != "https") {
-            return UrlValidationResult.Invalid("Only HTTP and HTTPS URLs are supported (rejected: $scheme)")
-        }
-
-        val host = uri.host?.lowercase() ?: return UrlValidationResult.Invalid("Missing host in URL")
-
-        // SSRF & Localhost Protection (Hard Invariant)
-        if (host == "localhost" || host == "127.0.0.1" || host == "::1" || host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172.16.")) {
-            return UrlValidationResult.Invalid("Local and private network addresses are prohibited")
-        }
-
-        val platform = classify(trimmed, host)
-        val extractedId = extractPlatformId(trimmed, platform)
-
-        return UrlValidationResult.Valid(
-            normalizedUrl = trimmed,
-            platform = platform,
-            host = host,
-            platformContentId = extractedId
-        )
     }
 
-    private fun classify(url: String, host: String): MediaSource {
+    /**
+     * Strict host boundary classifier.
+     * Prevents attacker-controlled subdomains (e.g. youtube.com.attacker.example) from being classified as YouTube.
+     */
+    fun classifyHostAndUrl(host: String, url: String): MediaSource {
+        val normalizedHost = host.lowercase()
         return when {
-            host.contains("youtube.com") || host.contains("youtu.be") || YOUTUBE_REGEX.matches(url) -> MediaSource.YOUTUBE
-            host.contains("instagram.com") || INSTAGRAM_REGEX.matches(url) -> MediaSource.INSTAGRAM
-            host.contains("twitter.com") || host.contains("x.com") || X_TWITTER_REGEX.matches(url) -> MediaSource.X_TWITTER
+            normalizedHost in YOUTUBE_HOSTS || YOUTUBE_REGEX.matches(url) -> {
+                if (normalizedHost in YOUTUBE_HOSTS) MediaSource.YOUTUBE else MediaSource.GENERIC_URL
+            }
+            normalizedHost in INSTAGRAM_HOSTS || INSTAGRAM_REGEX.matches(url) -> {
+                if (normalizedHost in INSTAGRAM_HOSTS) MediaSource.INSTAGRAM else MediaSource.GENERIC_URL
+            }
+            normalizedHost in X_TWITTER_HOSTS || X_TWITTER_REGEX.matches(url) -> {
+                if (normalizedHost in X_TWITTER_HOSTS) MediaSource.X_TWITTER else MediaSource.GENERIC_URL
+            }
             else -> MediaSource.GENERIC_URL
         }
     }
@@ -78,15 +118,4 @@ object UrlClassifier {
             else -> null
         }
     }
-}
-
-sealed interface UrlValidationResult {
-    data class Valid(
-        val normalizedUrl: String,
-        val platform: MediaSource,
-        val host: String,
-        val platformContentId: String? = null
-    ) : UrlValidationResult
-
-    data class Invalid(val reason: String) : UrlValidationResult
 }

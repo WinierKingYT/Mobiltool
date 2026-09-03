@@ -4,39 +4,37 @@ import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.common.result.ErrorCode
 import com.personaltool.core.model.media.MediaFormatOption
 import com.personaltool.core.model.media.MediaSource
-import com.personaltool.core.model.media.MediaType
 import java.io.File
 
 class DefaultMediaExtractor(
     override val adapterName: String = "TruthfulPlatformMediaExtractor",
-    private val streamDownloader: RealHttpStreamDownloader = RealHttpStreamDownloader()
+    private val streamDownloader: RealHttpStreamDownloader = RealHttpStreamDownloader(),
+    private val dnsLookup: DnsLookup = SystemDnsLookup
 ) : MediaExtractor {
 
     override fun canHandle(url: String): Boolean {
-        return when (UrlClassifier.validateAndNormalize(url)) {
+        return when (UrlClassifier.validateAndNormalize(url, dnsLookup)) {
             is UrlValidationResult.Valid -> true
             is UrlValidationResult.Invalid -> false
         }
     }
 
     override suspend fun probeUrl(url: String): AppResult<MediaProbeResult> {
-        val validation = UrlClassifier.validateAndNormalize(url)
+        val validation = UrlClassifier.validateAndNormalize(url, dnsLookup)
         if (validation is UrlValidationResult.Invalid) {
             return AppResult.Error(
                 message = validation.reason,
-                code = ErrorCode.VALIDATION_ERROR
+                code = if (validation.isSsrfViolation) ErrorCode.SECURITY_VIOLATION else ErrorCode.VALIDATION_ERROR
             )
         }
 
-        val validUrl = (validation as UrlValidationResult.Valid).normalizedUrl
-        val platform = validation.platform
-        val contentId = validation.platformContentId
+        val valid = validation as UrlValidationResult.Valid
+        val platform = valid.platform
 
         return when (platform) {
             MediaSource.GENERIC_URL,
             MediaSource.LOCAL_IMPORT -> {
-                // Perform real HTTP HEAD probe on direct stream URLs
-                val probeResult = HttpMediaProber.probeDirectMediaUrl(validUrl)
+                val probeResult = HttpMediaProber.probeDirectMediaUrl(valid.normalizedUrl, dnsLookup)
                 when (probeResult) {
                     is AppResult.Success -> {
                         val probe = probeResult.data
@@ -48,7 +46,7 @@ class DefaultMediaExtractor(
                             MediaProbeResult(
                                 url = probe.finalResolvedUrl,
                                 title = probe.suggestedFileName,
-                                uploader = validation.host,
+                                uploader = valid.host,
                                 durationMs = 0L,
                                 thumbnailUrl = null,
                                 sourcePlatform = platform,
@@ -57,7 +55,7 @@ class DefaultMediaExtractor(
                                         formatId = "direct-orig",
                                         ext = ext,
                                         resolution = if (isAudio) "Direct Audio Stream" else "Direct Video Stream",
-                                        note = probe.contentType ?: "Auto-detected stream",
+                                        note = probe.contentType ?: "Direct HTTP Media",
                                         fileSizeBytes = size,
                                         isAudioOnly = isAudio
                                     )
@@ -79,10 +77,9 @@ class DefaultMediaExtractor(
             MediaSource.YOUTUBE,
             MediaSource.INSTAGRAM,
             MediaSource.X_TWITTER -> {
-                // Truth Gate: Specialized platform scrapers (YouTube/IG/X) are not implemented/linked in P0.
-                // Fail closed with stable error code instead of fabricating metadata or formats.
+                // Truth Gate: Platform extractors are unlinked pending ADR_002 approval.
                 AppResult.Error(
-                    message = "PLATFORM_EXTRACTION_UNAVAILABLE: Dedicated extractor for ${platform.name} is not linked in P0 baseline. Direct stream extraction only.",
+                    message = "PLATFORM_EXTRACTION_UNAVAILABLE: Dedicated extractor for ${platform.name} is unlinked in current baseline. Direct HTTP streams only.",
                     code = ErrorCode.EXTRACTION_FAILED
                 )
             }
@@ -104,16 +101,14 @@ class DefaultMediaExtractor(
 
         return when (downloadResult) {
             is AppResult.Success -> {
-                val file = downloadResult.data
-                val mime = if (request.targetType == MediaType.AUDIO_ONLY) "audio/mp4" else "video/mp4"
-
+                val fileInfo = downloadResult.data
                 AppResult.Success(
                     DownloadedMediaResult(
                         downloadId = request.id,
-                        outputFilePath = file.absolutePath,
+                        outputFilePath = fileInfo.file.absolutePath,
                         durationMs = 0L,
-                        fileSizeBytes = file.length(),
-                        mimeType = mime
+                        fileSizeBytes = fileInfo.fileSizeBytes,
+                        mimeType = fileInfo.detectedMimeType
                     )
                 )
             }

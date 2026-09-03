@@ -2,8 +2,7 @@
 
 **Project:** Mobiltool  
 **Repository:** `WinierKingYT/Mobiltool`  
-**Development Model:** Sequential / Gate-Based  
-**Current Active Part:** `P0 — Truth Pass & Baseline`  
+**Current Active Part:** Canonical source is [ACTIVE_PART.md](file:///c:/Users/ahmet/Desktop/aramakay%C4%B1t/docs/ACTIVE_PART.md) (Currently `P2 — Media / Video Downloader`)  
 
 ---
 

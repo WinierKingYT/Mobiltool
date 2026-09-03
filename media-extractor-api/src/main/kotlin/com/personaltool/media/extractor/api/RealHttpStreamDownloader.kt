@@ -9,13 +9,20 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
-import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
+data class DownloadedFileInfo(
+    val file: File,
+    val fileSizeBytes: Long,
+    val sha256Hex: String,
+    val detectedMimeType: String
+)
+
 class RealHttpStreamDownloader(
-    private val connectTimeoutMs: Int = 10000,
-    private val readTimeoutMs: Int = 30000,
-    private val bufferSizeBytes: Int = 32768 // 32KB buffer
+    private val connectTimeoutMs: Int = SafeHttpTransport.DEFAULT_CONNECT_TIMEOUT_MS,
+    private val readTimeoutMs: Int = SafeHttpTransport.DEFAULT_READ_TIMEOUT_MS,
+    private val bufferSizeBytes: Int = 32768, // 32KB buffer
+    private val dnsLookup: DnsLookup = SystemDnsLookup
 ) {
 
     private val activeConnections = ConcurrentHashMap<String, HttpURLConnection>()
@@ -25,44 +32,47 @@ class RealHttpStreamDownloader(
         sourceUrl: String,
         destinationFile: File,
         onProgress: (DownloadProgress) -> Unit
-    ): AppResult<File> = withContext(Dispatchers.IO) {
-        val validation = UrlClassifier.validateAndNormalize(sourceUrl)
-        if (validation is UrlValidationResult.Invalid) {
-            return@withContext AppResult.Error(
-                message = "Invalid URL: ${validation.reason}",
-                code = ErrorCode.VALIDATION_ERROR
-            )
-        }
-
+    ): AppResult<DownloadedFileInfo> = withContext(Dispatchers.IO) {
         destinationFile.parentFile?.mkdirs()
         val partFile = File(destinationFile.parentFile, "${destinationFile.name}.part")
 
-        var connection: HttpURLConnection? = null
+        // Clean up any stale partial files from prior aborted attempts
+        if (partFile.exists()) {
+            partFile.delete()
+        }
+
+        val transportResult = SafeHttpTransport.openSafeConnection(
+            initialUrl = sourceUrl,
+            method = "GET",
+            connectTimeoutMs = connectTimeoutMs,
+            readTimeoutMs = readTimeoutMs,
+            dnsLookup = dnsLookup
+        )
+
+        val response = when (transportResult) {
+            is AppResult.Success -> transportResult.data
+            is AppResult.Error -> return@withContext transportResult
+            AppResult.Loading -> return@withContext AppResult.Loading
+        }
+
         try {
-            val url = URI(sourceUrl).toURL()
-            connection = (url.openConnection() as HttpURLConnection).apply {
-                connectTimeout = connectTimeoutMs
-                readTimeout = readTimeoutMs
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "Mobiltool/1.0 (Linux; Android)")
-            }
+            val conn = response.connection
+            activeConnections[downloadId] = conn
 
-            activeConnections[downloadId] = connection
-
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) {
+            val code = response.responseCode
+            if (code !in 200..299) {
                 return@withContext AppResult.Error(
-                    message = "Server returned HTTP $responseCode (${connection.responseMessage})",
+                    message = "Server returned HTTP $code (${conn.responseMessage})",
                     code = ErrorCode.NETWORK_ERROR
                 )
             }
 
-            val totalBytes = connection.contentLengthLong.takeIf { it > 0 } ?: -1L
+            val totalBytes = conn.contentLengthLong.takeIf { it > 0 } ?: -1L
             var bytesDownloaded = 0L
             var lastProgressTime = System.currentTimeMillis()
             var bytesSinceLastProgress = 0L
 
-            connection.inputStream.use { input ->
+            conn.inputStream.use { input ->
                 FileOutputStream(partFile, false).use { output ->
                     val buffer = ByteArray(bufferSizeBytes)
                     var read: Int
@@ -78,7 +88,7 @@ class RealHttpStreamDownloader(
 
                         val now = System.currentTimeMillis()
                         val timeDiff = now - lastProgressTime
-                        if (timeDiff >= 200 || bytesDownloaded == totalBytes) {
+                        if (timeDiff >= 200 || (totalBytes > 0 && bytesDownloaded == totalBytes)) {
                             val speed = if (timeDiff > 0) (bytesSinceLastProgress * 1000L) / timeDiff else 0L
                             val percent = if (totalBytes > 0) ((bytesDownloaded * 100) / totalBytes).toInt().coerceIn(0, 100) else 0
 
@@ -102,20 +112,49 @@ class RealHttpStreamDownloader(
 
             if (bytesDownloaded == 0L) {
                 partFile.delete()
-                return@withContext AppResult.Error("Download completed with 0 bytes received", code = ErrorCode.EXTRACTION_FAILED)
+                return@withContext AppResult.Error("Download finished with 0 bytes received", code = ErrorCode.EXTRACTION_FAILED)
             }
 
-            // Atomic rename from .part to target file
+            // P2 Invariant: FILE VALIDATION + HASH before final destination commit
+            val validation = MediaFileValidator.validateFile(partFile)
+            if (validation is FileValidationResult.Invalid) {
+                partFile.delete()
+                return@withContext AppResult.Error(
+                    message = "Downloaded file validation failed: ${validation.reason}",
+                    code = ErrorCode.VALIDATION_ERROR
+                )
+            }
+
+            val validResult = validation as FileValidationResult.Valid
+
+            // Crash-safe commit: rename or verified hash copy
             if (destinationFile.exists()) {
                 destinationFile.delete()
             }
-            val renamed = partFile.renameTo(destinationFile)
-            if (!renamed) {
+
+            val renameSuccess = partFile.renameTo(destinationFile)
+            if (!renameSuccess) {
                 partFile.copyTo(destinationFile, overwrite = true)
+                val destinationSha = MediaFileValidator.calculateSha256(destinationFile)
+                if (destinationSha != validResult.sha256Hex) {
+                    destinationFile.delete()
+                    partFile.delete()
+                    return@withContext AppResult.Error(
+                        message = "Crash-safe commit hash mismatch between staging and canonical destination",
+                        code = ErrorCode.STORAGE_ERROR
+                    )
+                }
                 partFile.delete()
             }
 
-            AppResult.Success(destinationFile)
+            AppResult.Success(
+                DownloadedFileInfo(
+                    file = destinationFile,
+                    fileSizeBytes = validResult.fileSizeBytes,
+                    sha256Hex = validResult.sha256Hex,
+                    detectedMimeType = validResult.detectedMimeType
+                )
+            )
         } catch (e: CancellationException) {
             partFile.delete()
             AppResult.Error("Download cancelled: ${e.message}", code = ErrorCode.UNKNOWN)
@@ -124,7 +163,7 @@ class RealHttpStreamDownloader(
             AppResult.Error("Download failed: ${e.message}", code = ErrorCode.NETWORK_ERROR)
         } finally {
             activeConnections.remove(downloadId)
-            runCatching { connection?.disconnect() }
+            response.close()
         }
     }
 
