@@ -1,6 +1,8 @@
 package com.personaltool.app
 
 import android.app.Application
+import com.personaltool.app.audio.AndroidMediaPlayerEngine
+import com.personaltool.app.audio.AudioPlaybackController
 import com.personaltool.core.jobs.power.PowerThermalBudgetManager
 import com.personaltool.core.storage.cleanup.StagingCleaner
 import com.personaltool.core.storage.db.AppDatabase
@@ -21,6 +23,12 @@ class PersonalToolApplication : Application() {
 
     val stagingDirectory: File by lazy {
         File(filesDir, "staging").apply { mkdirs() }
+    }
+
+    val audioPlaybackController: AudioPlaybackController by lazy {
+        AudioPlaybackController(
+            engineFactory = { AndroidMediaPlayerEngine(this) }
+        )
     }
 
     override fun onCreate() {
