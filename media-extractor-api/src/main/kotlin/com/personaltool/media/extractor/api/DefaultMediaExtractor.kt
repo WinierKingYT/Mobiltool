@@ -4,11 +4,14 @@ import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.common.result.ErrorCode
 import com.personaltool.core.model.media.MediaFormatOption
 import com.personaltool.core.model.media.MediaSource
+import com.personaltool.media.extractor.api.youtube.NewPipeYouTubeExtractor
+import com.personaltool.media.extractor.api.youtube.YouTubeExtractor
 import java.io.File
 
 class DefaultMediaExtractor(
     override val adapterName: String = "TruthfulPlatformMediaExtractor",
     private val streamDownloader: RealHttpStreamDownloader = RealHttpStreamDownloader(),
+    private val youtubeExtractor: YouTubeExtractor = NewPipeYouTubeExtractor(),
     private val dnsLookup: DnsLookup = SystemDnsLookup
 ) : MediaExtractor {
 
@@ -74,12 +77,15 @@ class DefaultMediaExtractor(
                     is AppResult.Loading -> AppResult.Loading
                 }
             }
-            MediaSource.YOUTUBE,
+            MediaSource.YOUTUBE -> {
+                // ADR_002 APPROVED: Pure JVM YouTube Extractor Adapter
+                youtubeExtractor.probeYouTubeUrl(valid.normalizedUrl)
+            }
             MediaSource.INSTAGRAM,
             MediaSource.X_TWITTER -> {
-                // Truth Gate: Platform extractors are unlinked pending ADR_002 approval.
+                // ADR_002: Instagram and X are NOT approved / unresolved in current baseline
                 AppResult.Error(
-                    message = "PLATFORM_EXTRACTION_UNAVAILABLE: Dedicated extractor for ${platform.name} is unlinked in current baseline. Direct HTTP streams only.",
+                    message = "PLATFORM_EXTRACTION_UNAVAILABLE: Dedicated extractor for ${platform.name} is not approved in current baseline. Direct HTTP streams and YouTube only.",
                     code = ErrorCode.EXTRACTION_FAILED
                 )
             }
@@ -92,9 +98,22 @@ class DefaultMediaExtractor(
     ): AppResult<DownloadedMediaResult> {
         val destFile = File(request.destinationPath)
 
+        val validation = UrlClassifier.validateAndNormalize(request.sourceUrl, dnsLookup)
+        val directStreamUrl = if (validation is UrlValidationResult.Valid && validation.platform == MediaSource.YOUTUBE) {
+            // P2-YT-E04: Extract direct media stream URL from NewPipe
+            when (val extractResult = youtubeExtractor.extractStreamUrl(validation.normalizedUrl, request.formatId)) {
+                is AppResult.Success -> extractResult.data
+                is AppResult.Error -> return AppResult.Error(extractResult.message, extractResult.cause, extractResult.code)
+                AppResult.Loading -> return AppResult.Loading
+            }
+        } else {
+            request.sourceUrl
+        }
+
+        // P2-YT-E04: All actual binary streaming continues strictly through Mobiltool's verified RealHttpStreamDownloader
         val downloadResult = streamDownloader.download(
             downloadId = request.id,
-            sourceUrl = request.sourceUrl,
+            sourceUrl = directStreamUrl,
             destinationFile = destFile,
             onProgress = onProgress
         )

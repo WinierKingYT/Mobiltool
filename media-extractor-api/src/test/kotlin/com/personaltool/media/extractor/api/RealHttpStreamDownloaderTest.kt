@@ -388,8 +388,16 @@ class RealHttpStreamDownloaderTest {
     }
 
     @Test
-    fun extractor_probeYouTubeUrl_failsClosedWithPlatformExtractionUnavailable() = runTest {
-        val extractor = DefaultMediaExtractor(dnsLookup = publicDns)
+    fun extractor_probeYouTubeUrl_failsClosedWhenExtractorFails() = runTest {
+        val fakeYt = object : com.personaltool.media.extractor.api.youtube.YouTubeExtractor {
+            override suspend fun probeYouTubeUrl(url: String): AppResult<MediaProbeResult> {
+                return AppResult.Error("PLATFORM_EXTRACTION_UNAVAILABLE: Video unavailable", code = ErrorCode.EXTRACTION_FAILED)
+            }
+            override suspend fun extractStreamUrl(url: String, formatId: String): AppResult<String> {
+                return AppResult.Error("Extraction failed", code = ErrorCode.EXTRACTION_FAILED)
+            }
+        }
+        val extractor = DefaultMediaExtractor(youtubeExtractor = fakeYt, dnsLookup = publicDns)
         val result = extractor.probeUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
         assertThat(result).isInstanceOf(AppResult.Error::class.java)
         val error = result as AppResult.Error

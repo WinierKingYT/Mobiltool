@@ -11,6 +11,7 @@ dependencies {
     implementation(project(":core-model"))
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.okhttp)
+    implementation(libs.newpipe.extractor)
 
     testImplementation(libs.junit)
     testImplementation(libs.truth)
@@ -21,6 +22,7 @@ dependencies {
 tasks.test {
     // P2-DIRECT-FINAL-04: Standard test task is 100% deterministic and offline
     exclude("**/*RealPublicDirectMediaTest*")
+    exclude("**/*RealYouTubeExtractionTest*")
     exclude("**/*RealNetworkTest*")
 }
 
@@ -30,6 +32,18 @@ tasks.register<Test>("realDirectMediaTest") {
     testClassesDirs = sourceSets["test"].output.classesDirs
     classpath = sourceSets["test"].runtimeClasspath
     include("**/*RealPublicDirectMediaTest*")
+    testLogging {
+        showStandardStreams = true
+        events("passed", "skipped", "failed", "standardOut", "standardError")
+    }
+}
+
+tasks.register<Test>("realYouTubeExtractionTest") {
+    description = "Runs the explicit opt-in live public YouTube extraction test"
+    group = "verification"
+    testClassesDirs = sourceSets["test"].output.classesDirs
+    classpath = sourceSets["test"].runtimeClasspath
+    include("**/*RealYouTubeExtractionTest*")
     testLogging {
         showStandardStreams = true
         events("passed", "skipped", "failed", "standardOut", "standardError")

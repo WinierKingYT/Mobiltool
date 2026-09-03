@@ -254,8 +254,14 @@ fun MediaIntakeScreen(
                             )
                         }
 
+                        val sizeBytes = format.fileSizeBytes
+                        val sizeText = if (sizeBytes != null && sizeBytes > 0) {
+                            "${sizeBytes / 1024 / 1024} MB"
+                        } else {
+                            if (format.isAudioOnly) "Audio" else "Stream"
+                        }
                         Text(
-                            text = "${(format.fileSizeBytes ?: 0) / 1024 / 1024} MB",
+                            text = sizeText,
                             style = typography.monoMedium,
                             color = if (isSelected) colors.accent else colors.textSecondary
                         )
