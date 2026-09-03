@@ -15,20 +15,29 @@ import java.net.URI
 import java.util.concurrent.TimeUnit
 
 /**
- * Hardened NewPipe Downloader Bridge (P2-YT-FINAL-01).
+ * Hardened NewPipe Downloader Bridge (P2-YT-FINAL-01, P2-YT-FINAL-01B).
  *
  * Enforces strict destination security on ALL NewPipe-originated HTTP requests:
  * 1. Destination pre-validation against SSRF / private IP policies via NetworkSecurityPolicy.
  * 2. Strict DNS binding via ValidatedDns to the pre-validated IP address set (mitigating DNS TOCTOU / rebinding).
  * 3. Manual hop-by-hop redirect re-validation with cycle detection and HTTPS -> HTTP downgrade prevention.
  * 4. Standard TLS certificate and hostname verification (NO trust-all, NO hostname bypasses).
- * 5. Full support for GET, HEAD, and POST methods with preserved headers.
+ * 5. Full support for GET, HEAD, and POST methods with preserved headers (303 -> GET, 307/308 -> preserve method).
  */
 class NewPipeDownloaderBridge(
-    private val dnsLookup: DnsLookup = SystemDnsLookup,
-    private val connectTimeoutMs: Long = 15000L,
-    private val readTimeoutMs: Long = 15000L,
-    private val maxRedirects: Int = 5
+    val dnsLookup: DnsLookup = SystemDnsLookup,
+    val connectTimeoutMs: Long = 15000L,
+    val readTimeoutMs: Long = 15000L,
+    val maxRedirects: Int = 5,
+    private val clientFactory: (ValidatedDns) -> OkHttpClient = { validatedDns ->
+        OkHttpClient.Builder()
+            .dns(validatedDns)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
+            .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
+            .build()
+    }
 ) : Downloader() {
 
     companion object {
@@ -61,13 +70,7 @@ class NewPipeDownloaderBridge(
             }
 
             // 2. Build OkHttpClient bound to approved DNS resolution and standard TLS
-            val client = OkHttpClient.Builder()
-                .dns(ValidatedDns(approvedIps))
-                .followRedirects(false)
-                .followSslRedirects(false)
-                .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
-                .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
-                .build()
+            val client = clientFactory(ValidatedDns(approvedIps))
 
             val reqBuilder = okhttp3.Request.Builder().url(currentUrl)
             var hasUserAgent = false
@@ -134,9 +137,16 @@ class NewPipeDownloaderBridge(
                     throw IOException("Insecure protocol downgrade from HTTPS to HTTP blocked on redirect to $nextUrl")
                 }
 
-                // 303 See Other changes method to GET
-                if (responseCode == 303) {
-                    currentMethod = "GET"
+                // Method preservation rules across HTTP redirect codes
+                when (responseCode) {
+                    303 -> currentMethod = "GET" // 303 See Other explicitly changes method to GET
+                    307, 308 -> { /* 307 Temporary Redirect and 308 Permanent Redirect MUST preserve request method */ }
+                    301, 302 -> {
+                        // For 301/302, standard HTTP behavior changes POST to GET
+                        if (currentMethod.equals("POST", ignoreCase = true)) {
+                            currentMethod = "GET"
+                        }
+                    }
                 }
 
                 currentUrl = nextUrl
@@ -157,5 +167,22 @@ class NewPipeDownloaderBridge(
                 okResponse.request.url.toString()
             )
         }
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is NewPipeDownloaderBridge) return false
+        return dnsLookup == other.dnsLookup &&
+                connectTimeoutMs == other.connectTimeoutMs &&
+                readTimeoutMs == other.readTimeoutMs &&
+                maxRedirects == other.maxRedirects
+    }
+
+    override fun hashCode(): Int {
+        var result = dnsLookup.hashCode()
+        result = 31 * result + connectTimeoutMs.hashCode()
+        result = 31 * result + readTimeoutMs.hashCode()
+        result = 31 * result + maxRedirects
+        return result
     }
 }

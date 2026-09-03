@@ -9,28 +9,27 @@ import com.personaltool.media.extractor.api.MediaProbeResult
 import com.personaltool.media.extractor.api.SystemDnsLookup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
 import org.schabi.newpipe.extractor.exceptions.ExtractionException
 import org.schabi.newpipe.extractor.exceptions.ParsingException
 import org.schabi.newpipe.extractor.stream.StreamInfo
-import java.util.concurrent.atomic.AtomicBoolean
 
+/**
+ * YouTube Extractor Adapter using NewPipeExtractor (P2-YT-FINAL-01..03).
+ *
+ * Invariants:
+ * 1. Process-global runtime initialized via NewPipeRuntime with secured NewPipeDownloaderBridge.
+ * 2. Exact format identity based on stable upstream itag identifiers (P2-YT-FINAL-02).
+ * 3. Zero silent fallback streams (no firstAudio/firstVideo/anyStream substitutions).
+ * 4. Zero leak of NewPipe internal types across adapter boundary.
+ */
 class NewPipeYouTubeExtractor(
     private val dnsLookup: DnsLookup = SystemDnsLookup,
     private val downloaderBridge: NewPipeDownloaderBridge = NewPipeDownloaderBridge(dnsLookup = dnsLookup)
 ) : YouTubeExtractor {
 
     companion object {
-        private val isInitialized = AtomicBoolean(false)
-
-        private fun ensureInitialized(bridge: NewPipeDownloaderBridge) {
-            if (isInitialized.compareAndSet(false, true)) {
-                NewPipe.init(bridge)
-            }
-        }
-
         fun normalizeYouTubeUrl(rawUrl: String): String {
             return when {
                 rawUrl.contains("/shorts/") -> {
@@ -44,28 +43,47 @@ class NewPipeYouTubeExtractor(
                 else -> rawUrl
             }
         }
+
+        fun buildVideoFormatId(itag: Int, resolution: String?, formatSuffix: String?): String {
+            return if (itag > 0) {
+                "youtube:video:itag:$itag"
+            } else {
+                "youtube:video:${resolution ?: "unknown"}-${formatSuffix ?: "mp4"}"
+            }
+        }
+
+        fun buildAudioFormatId(itag: Int, formatSuffix: String?): String {
+            return if (itag > 0) {
+                "youtube:audio:itag:$itag"
+            } else {
+                "youtube:audio:${formatSuffix ?: "m4a"}"
+            }
+        }
     }
 
     override suspend fun probeYouTubeUrl(url: String): AppResult<MediaProbeResult> = withContext(Dispatchers.IO) {
         try {
-            ensureInitialized(downloaderBridge)
+            NewPipeRuntime.ensureInitialized(downloaderBridge)
 
             val targetUrl = normalizeYouTubeUrl(url)
             val streamInfo = StreamInfo.getInfo(ServiceList.YouTube, targetUrl)
 
             val formats = mutableListOf<MediaFormatOption>()
 
-            // 1. Video Streams (progressive / muxed or video-only)
-            streamInfo.videoStreams?.forEachIndexed { idx, vStream ->
+            // 1. Video Streams (progressive / muxed or video-only) with stable itag identities
+            streamInfo.videoStreams?.forEach { vStream ->
+                val itag = vStream.itag
                 val res = vStream.resolution ?: "Video"
                 val fmtName = vStream.format?.name ?: "mp4"
                 val ext = vStream.format?.suffix ?: "mp4"
+                val formatId = buildVideoFormatId(itag, res, ext)
+
                 formats.add(
                     MediaFormatOption(
-                        formatId = "yt-video-$idx-$res-$fmtName",
+                        formatId = formatId,
                         ext = ext,
                         resolution = res,
-                        note = "YouTube Video ($res $fmtName)",
+                        note = "YouTube Video ($res $fmtName itag:$itag)",
                         fileSizeBytes = null,
                         isAudioOnly = false,
                         videoCodec = vStream.codec,
@@ -74,18 +92,21 @@ class NewPipeYouTubeExtractor(
                 )
             }
 
-            // 2. Audio Streams
-            streamInfo.audioStreams?.forEachIndexed { idx, aStream ->
+            // 2. Audio Streams with stable itag identities
+            streamInfo.audioStreams?.forEach { aStream ->
+                val itag = aStream.itag
                 val fmtName = aStream.format?.name ?: "m4a"
                 val ext = aStream.format?.suffix ?: "m4a"
                 val bitrate = aStream.averageBitrate
                 val resLabel = if (bitrate > 0) "$bitrate kbps Audio" else "Audio Stream"
+                val formatId = buildAudioFormatId(itag, ext)
+
                 formats.add(
                     MediaFormatOption(
-                        formatId = "yt-audio-$idx-$fmtName",
+                        formatId = formatId,
                         ext = ext,
                         resolution = resLabel,
-                        note = "YouTube Audio ($fmtName)",
+                        note = "YouTube Audio ($fmtName itag:$itag)",
                         fileSizeBytes = null,
                         isAudioOnly = true,
                         videoCodec = null,
@@ -146,57 +167,69 @@ class NewPipeYouTubeExtractor(
         }
     }
 
-    override suspend fun extractStreamUrl(url: String, formatId: String): AppResult<String> = withContext(Dispatchers.IO) {
+    override suspend fun extractStream(url: String, requestedFormatId: String): AppResult<ResolvedPlatformStream> = withContext(Dispatchers.IO) {
         try {
-            ensureInitialized(downloaderBridge)
+            NewPipeRuntime.ensureInitialized(downloaderBridge)
 
             val targetUrl = normalizeYouTubeUrl(url)
             val streamInfo = StreamInfo.getInfo(ServiceList.YouTube, targetUrl)
 
-            // Look up matching stream
-            if (formatId.startsWith("yt-audio-")) {
-                val audioIndex = formatId.removePrefix("yt-audio-").substringBefore('-').toIntOrNull()
-                val aStreams = streamInfo.audioStreams
-                if (audioIndex != null && aStreams != null && audioIndex in aStreams.indices) {
-                    val streamUrl = aStreams[audioIndex].url
+            // P2-YT-FINAL-02: Exact format matching on stable upstream stream ID / itag
+            // 1. Search in audio streams
+            if (requestedFormatId.startsWith("youtube:audio:")) {
+                val matchingAudio = streamInfo.audioStreams?.find { aStream ->
+                    buildAudioFormatId(aStream.itag, aStream.format?.suffix) == requestedFormatId
+                }
+                if (matchingAudio != null) {
+                    val streamUrl = matchingAudio.url
                     if (!streamUrl.isNullOrBlank()) {
-                        return@withContext AppResult.Success(streamUrl)
+                        return@withContext AppResult.Success(
+                            ResolvedPlatformStream(
+                                formatId = requestedFormatId,
+                                directStreamUrl = streamUrl,
+                                platform = MediaSource.YOUTUBE,
+                                isAudioOnly = true,
+                                itag = matchingAudio.itag,
+                                resolution = if (matchingAudio.averageBitrate > 0) "${matchingAudio.averageBitrate} kbps" else "Audio",
+                                mimeType = matchingAudio.format?.mimeType
+                            )
+                        )
                     }
-                }
-                val firstAudio = aStreams?.firstOrNull()?.url
-                if (!firstAudio.isNullOrBlank()) {
-                    return@withContext AppResult.Success(firstAudio)
-                }
-            } else if (formatId.startsWith("yt-video-")) {
-                val videoIndex = formatId.removePrefix("yt-video-").substringBefore('-').toIntOrNull()
-                val vStreams = streamInfo.videoStreams
-                if (videoIndex != null && vStreams != null && videoIndex in vStreams.indices) {
-                    val streamUrl = vStreams[videoIndex].url
-                    if (!streamUrl.isNullOrBlank()) {
-                        return@withContext AppResult.Success(streamUrl)
-                    }
-                }
-                val firstVideo = vStreams?.firstOrNull()?.url
-                if (!firstVideo.isNullOrBlank()) {
-                    return@withContext AppResult.Success(firstVideo)
                 }
             }
 
-            val anyStream = streamInfo.videoStreams?.firstOrNull()?.url
-                ?: streamInfo.audioStreams?.firstOrNull()?.url
-
-            if (!anyStream.isNullOrBlank()) {
-                AppResult.Success(anyStream)
-            } else {
-                AppResult.Error(
-                    message = "PLATFORM_EXTRACTION_UNAVAILABLE: Could not resolve playable stream URL for format $formatId",
-                    code = ErrorCode.EXTRACTION_FAILED
-                )
+            // 2. Search in video streams
+            if (requestedFormatId.startsWith("youtube:video:")) {
+                val matchingVideo = streamInfo.videoStreams?.find { vStream ->
+                    buildVideoFormatId(vStream.itag, vStream.resolution, vStream.format?.suffix) == requestedFormatId
+                }
+                if (matchingVideo != null) {
+                    val streamUrl = matchingVideo.url
+                    if (!streamUrl.isNullOrBlank()) {
+                        return@withContext AppResult.Success(
+                            ResolvedPlatformStream(
+                                formatId = requestedFormatId,
+                                directStreamUrl = streamUrl,
+                                platform = MediaSource.YOUTUBE,
+                                isAudioOnly = false,
+                                itag = matchingVideo.itag,
+                                resolution = matchingVideo.resolution,
+                                mimeType = matchingVideo.format?.mimeType
+                            )
+                        )
+                    }
+                }
             }
+
+            // P2-YT-FINAL-02 Invariant: ZERO fallbacks to firstAudio, firstVideo, or anyStream!
+            AppResult.Error(
+                message = "PLATFORM_EXTRACTION_UNAVAILABLE: Exact requested stream format '$requestedFormatId' is not available in YouTube stream",
+                code = ErrorCode.EXTRACTION_FAILED
+            )
 
         } catch (e: Exception) {
             AppResult.Error(
-                message = "PLATFORM_EXTRACTION_UNAVAILABLE: Failed extracting direct stream URL: ${e.message}",
+                message = "PLATFORM_EXTRACTION_UNAVAILABLE: Failed extracting direct stream: ${e.message}",
                 cause = e,
                 code = ErrorCode.EXTRACTION_FAILED
             )

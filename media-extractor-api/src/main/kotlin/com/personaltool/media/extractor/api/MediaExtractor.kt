@@ -39,7 +39,11 @@ data class DownloadedMediaResult(
     val durationMs: Long,
     val fileSizeBytes: Long,
     val mimeType: String,
-    val mediaKind: DetectedMediaKind = DetectedMediaKind.UNKNOWN
+    val mediaKind: DetectedMediaKind = DetectedMediaKind.UNKNOWN,
+    val sha256Hex: String = "",
+    val commitMethod: String = "StandardCopyOption.ATOMIC_MOVE",
+    val requestedFormatId: String? = null,
+    val resolvedFormatId: String? = null
 )
 
 interface MediaExtractor {

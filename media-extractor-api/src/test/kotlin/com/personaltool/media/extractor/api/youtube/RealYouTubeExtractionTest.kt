@@ -5,12 +5,14 @@ import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.model.media.MediaSource
 import com.personaltool.media.extractor.api.DefaultMediaExtractor
 import com.personaltool.media.extractor.api.DownloadRequest
+import com.personaltool.media.extractor.api.DownloadedMediaResult
 import com.personaltool.media.extractor.api.SystemDnsLookup
 import kotlinx.coroutines.runBlocking
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.net.URI
 
 class RealYouTubeExtractionTest {
 
@@ -20,13 +22,14 @@ class RealYouTubeExtractionTest {
     @Test
     fun executeRealPublicYouTubeExtractionAndDownload() = runBlocking {
         val testUrl = "https://www.youtube.com/watch?v=jNQXAC9IVRw"
-        val extractor = DefaultMediaExtractor(dnsLookup = SystemDnsLookup)
+        val ytExtractor = NewPipeYouTubeExtractor(dnsLookup = SystemDnsLookup)
+        val defaultExtractor = DefaultMediaExtractor(dnsLookup = SystemDnsLookup, youtubeExtractor = ytExtractor)
 
         println("=== STARTING REAL YOUTUBE VIDEO EXTRACTION TEST ===")
         println("Target URL: $testUrl")
 
         // 1. Probe URL
-        val probeResult = extractor.probeUrl(testUrl)
+        val probeResult = defaultExtractor.probeUrl(testUrl)
         assertThat(probeResult).isInstanceOf(AppResult.Success::class.java)
         val probe = (probeResult as AppResult.Success).data
 
@@ -38,12 +41,33 @@ class RealYouTubeExtractionTest {
         assertThat(probe.sourcePlatform).isEqualTo(MediaSource.YOUTUBE)
         assertThat(probe.availableFormats).isNotEmpty()
 
-        // 2. Select format
+        // 2. Select format with exact upstream itag ID
         val selectedFormat = probe.availableFormats.firstOrNull { it.isAudioOnly }
             ?: probe.availableFormats.first()
-        println("SELECTED FORMAT: ${selectedFormat.formatId} (${selectedFormat.note})")
+        println("REQUESTED FORMAT ID: ${selectedFormat.formatId}")
 
-        // 3. Execute End-to-End Download through Mobiltool verified downloader
+        // 3. Exact format re-resolution verification (P2-YT-FINAL-02)
+        val extractResult = ytExtractor.extractStream(testUrl, selectedFormat.formatId)
+        assertThat(extractResult).isInstanceOf(AppResult.Success::class.java)
+        val resolvedStream = (extractResult as AppResult.Success).data
+
+        val streamHost = try {
+            URI(resolvedStream.directStreamUrl).host ?: "unknown"
+        } catch (e: Exception) {
+            "unparseable"
+        }
+
+        println("RESOLVED FORMAT ID: ${resolvedStream.formatId}")
+        println("FORMAT TYPE: ${if (resolvedStream.isAudioOnly) "AUDIO" else "VIDEO"}")
+        println("ITAG OBSERVED: ${resolvedStream.itag}")
+        println("STREAM HOST OBSERVED: $streamHost")
+        println("STREAM URL PRESENT: ${resolvedStream.directStreamUrl.isNotEmpty()}")
+
+        // Strict Invariant: REQUESTED FORMAT ID == RESOLVED FORMAT ID
+        assertThat(resolvedStream.formatId).isEqualTo(selectedFormat.formatId)
+        assertThat(resolvedStream.directStreamUrl).isNotEmpty()
+
+        // 4. Execute End-to-End Download through Mobiltool verified downloader
         val destinationFile = File(tempFolder.root, "real_yt_sample.${selectedFormat.ext}")
         val downloadRequest = DownloadRequest(
             id = "real-yt-01",
@@ -52,14 +76,14 @@ class RealYouTubeExtractionTest {
             destinationPath = destinationFile.absolutePath
         )
 
-        val downloadResult = extractor.downloadMedia(downloadRequest) { progress ->
+        val downloadResult = defaultExtractor.downloadMedia(downloadRequest) { progress ->
             if (progress.percent % 25 == 0) {
                 println("Download progress: ${progress.percent}% (${progress.bytesDownloaded} bytes)")
             }
         }
 
         assertThat(downloadResult).isInstanceOf(AppResult.Success::class.java)
-        val downloaded = (downloadResult as AppResult.Success).data
+        val downloaded = (downloadResult as AppResult.Success<DownloadedMediaResult>).data
         val file = File(downloaded.outputFilePath)
 
         println("=== REAL YOUTUBE QUALIFICATION EVIDENCE RECORD (VIDEO) ===")
@@ -67,34 +91,50 @@ class RealYouTubeExtractionTest {
         println("SOURCE URL: $testUrl")
         println("CANONICAL URL: ${probe.url}")
         println("NEWPIPE VERSION: v0.26.5")
-        println("TITLE OBSERVED: ${probe.title}")
-        println("DURATION OBSERVED: ${probe.durationMs} ms")
-        println("AVAILABLE FORMAT COUNT: ${probe.availableFormats.size}")
-        println("SELECTED FORMAT: ${selectedFormat.formatId}")
-        println("STREAM URL EXTRACTION RESULT: SUCCESS (Direct GoogleVideo stream resolved)")
+        println("REQUESTED FORMAT ID: ${downloaded.requestedFormatId}")
+        println("RESOLVED FORMAT ID: ${downloaded.resolvedFormatId}")
+        println("FORMAT TYPE: ${if (resolvedStream.isAudioOnly) "AUDIO" else "VIDEO"}")
+        println("STREAM RESOLUTION RESULT: SUCCESS (Direct $streamHost stream resolved)")
         println("DOWNLOAD RESULT: SUCCESS")
         println("BYTES DOWNLOADED: ${downloaded.fileSizeBytes}")
         println("FINAL FILE SIZE: ${file.length()}")
         println("MEDIA KIND: ${downloaded.mediaKind}")
         println("MIME TYPE: ${downloaded.mimeType}")
-        println("COMMIT METHOD: StandardCopyOption.ATOMIC_MOVE")
+        println("SHA-256: ${downloaded.sha256Hex}")
+        println("COMMIT METHOD: ${downloaded.commitMethod}")
         println("===========================================================")
 
         assertThat(file.exists()).isTrue()
+        assertThat(file.length()).isEqualTo(downloaded.fileSizeBytes)
         assertThat(downloaded.fileSizeBytes).isGreaterThan(1000L)
+        assertThat(downloaded.requestedFormatId).isEqualTo(downloaded.resolvedFormatId)
+        assertThat(downloaded.commitMethod).isEqualTo("StandardCopyOption.ATOMIC_MOVE")
+        assertThat(downloaded.sha256Hex).isNotEmpty()
     }
 
     @Test
-    fun executeRealPublicYouTubeShortProbe() = runBlocking {
+    fun executeRealPublicYouTubeShortProbeAndStreamResolution() = runBlocking {
         val shortUrl = "https://www.youtube.com/shorts/jNQXAC9IVRw"
-        val extractor = DefaultMediaExtractor(dnsLookup = SystemDnsLookup)
+        val ytExtractor = NewPipeYouTubeExtractor(dnsLookup = SystemDnsLookup)
+        val defaultExtractor = DefaultMediaExtractor(dnsLookup = SystemDnsLookup, youtubeExtractor = ytExtractor)
 
         println("=== STARTING REAL YOUTUBE SHORT PROBE TEST ===")
         println("Target Short URL: $shortUrl")
 
-        val probeResult = extractor.probeUrl(shortUrl)
+        val probeResult = defaultExtractor.probeUrl(shortUrl)
         assertThat(probeResult).isInstanceOf(AppResult.Success::class.java)
         val probe = (probeResult as AppResult.Success).data
+
+        val selectedFormat = probe.availableFormats.first()
+        val extractResult = ytExtractor.extractStream(shortUrl, selectedFormat.formatId)
+        assertThat(extractResult).isInstanceOf(AppResult.Success::class.java)
+        val resolvedStream = (extractResult as AppResult.Success).data
+
+        val streamHost = try {
+            URI(resolvedStream.directStreamUrl).host ?: "unknown"
+        } catch (e: Exception) {
+            "unparseable"
+        }
 
         println("=== REAL YOUTUBE SHORT EVIDENCE RECORD ===")
         println("DATE: 2026-09-03")
@@ -104,10 +144,14 @@ class RealYouTubeExtractionTest {
         println("TITLE OBSERVED: ${probe.title}")
         println("DURATION OBSERVED: ${probe.durationMs} ms")
         println("AVAILABLE FORMAT COUNT: ${probe.availableFormats.size}")
-        println("STREAM URL EXTRACTION RESULT: SUCCESS")
+        println("REQUESTED FORMAT ID: ${selectedFormat.formatId}")
+        println("RESOLVED FORMAT ID: ${resolvedStream.formatId}")
+        println("STREAM RESOLUTION RESULT: SUCCESS (Direct $streamHost stream resolved)")
         println("==========================================")
 
         assertThat(probe.sourcePlatform).isEqualTo(MediaSource.YOUTUBE)
         assertThat(probe.availableFormats).isNotEmpty()
+        assertThat(resolvedStream.formatId).isEqualTo(selectedFormat.formatId)
+        assertThat(resolvedStream.directStreamUrl).isNotEmpty()
     }
 }

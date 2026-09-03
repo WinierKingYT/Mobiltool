@@ -4,7 +4,7 @@
 **Module:** `:media-extractor-api`  
 **Extractor Engine:** `NewPipeExtractor:v0.26.5` (JitPack)  
 **Binary Streaming Engine:** `RealHttpStreamDownloader` (Pure JVM OkHttp + Staging + Validation + Atomic Move)  
-**Security Boundary:** Zero user credentials, zero private cookie scraping, zero DRM bypass, fail-closed SSRF defense.  
+**Security Boundary:** Internal NewPipe SSRF defense with `NetworkSecurityPolicy`, `ValidatedDns`, and hop-by-hop redirect inspection. Zero user credentials, zero private cookie scraping, zero DRM bypass.  
 **Opt-in Gradle Verification Task:** `.\gradlew.bat :media-extractor-api:realYouTubeExtractionTest`
 
 ---
@@ -18,24 +18,30 @@
 - **Observed Duration:** `19000 ms` (19 seconds)
 - **Observed Uploader:** `jawed`
 - **Observed Formats Count:** `6` formats (Video + Audio streams extracted truthfully)
-- **Selected Format:** `yt-audio-0-m4a` (`YouTube Audio (m4a)`)
-- **Direct Stream URL Extraction:** `SUCCESS` (Resolved direct `googlevideo.com` CDN stream URL; query token/signature redacted)
+- **Requested Format ID:** `youtube:audio:itag:139`
+- **Resolved Format ID:** `youtube:audio:itag:139`
+- **Format Type:** `AUDIO` (itag: `139`)
+- **Direct Stream URL Host:** `rr8---sn-u0g3uxax3-pnur.googlevideo.com` (Expiring signature tokens redacted)
+- **Stream URL Extraction Result:** `SUCCESS` (Exact format matching: `requestedFormatId == resolvedFormatId`)
 - **Binary Download Execution:** `SUCCESS` (Streamed in 32KB buffers to `.part` staging file)
 - **Observed File Size (Bytes):** `117,526` bytes
 - **Observed MIME Type:** `video/mp4`
 - **Observed Container / Media Kind:** `UNKNOWN` (Strict format decoupled from container)
-- **Final Storage Commit Method:** `StandardCopyOption.ATOMIC_MOVE` (Zero renameTo/copy fallback)
+- **SHA-256 Digest:** `193a32b41614362c159652d238dfebcce6029285614828cbeb67401cd1c78111`
+- **Final Storage Commit Method:** `StandardCopyOption.ATOMIC_MOVE` (Derived dynamically from fileCommitter)
 - **Final Result:** `PASS` (Canonical file present, staging file deleted, file length = 117,526 bytes)
 
 ---
 
-### Case 2: Public YouTube Short Probe
+### Case 2: Public YouTube Short Probe & Stream Resolution
 - **Target URL:** `https://www.youtube.com/shorts/jNQXAC9IVRw`
 - **Canonical Resolved URL:** `https://www.youtube.com/watch?v=jNQXAC9IVRw` (Normalized)
 - **Observed Title:** `Me at the zoo`
 - **Observed Duration:** `19000 ms`
 - **Observed Formats Count:** `6`
-- **Stream URL Extraction Result:** `SUCCESS`
+- **Requested Format ID:** `youtube:video:itag:18`
+- **Resolved Format ID:** `youtube:video:itag:18`
+- **Stream Resolution Result:** `SUCCESS` (Direct `rr8---sn-u0g3uxax3-pnur.googlevideo.com` stream resolved; exact format match confirmed)
 - **Final Result:** `PASS`
 
 ---
@@ -44,7 +50,7 @@
 
 | Platform | Approval Status | Extractor Adapter | Production Behavior |
 | :--- | :--- | :--- | :--- |
-| **YouTube** | **APPROVED (ADR_002)** | `NewPipeYouTubeExtractor` (`v0.26.5`) | Probes metadata & formats, extracts direct stream URL, downloads via `RealHttpStreamDownloader` |
+| **YouTube** | **APPROVED (ADR_002)** | `NewPipeYouTubeExtractor` (`v0.26.5`) | Probes metadata & formats with stable itag IDs, extracts exact stream, downloads via `RealHttpStreamDownloader` |
 | **Instagram** | **NOT APPROVED** | Unlinked (`null`) | `PLATFORM_EXTRACTION_UNAVAILABLE` (`ErrorCode.EXTRACTION_FAILED`) |
 | **X / Twitter** | **NOT APPROVED** | Unlinked (`null`) | `PLATFORM_EXTRACTION_UNAVAILABLE` (`ErrorCode.EXTRACTION_FAILED`) |
 | **Direct HTTP** | **APPROVED** | `HttpMediaProber` + `RealHttpStreamDownloader` | Direct binary download with SHA-256 + atomic move |

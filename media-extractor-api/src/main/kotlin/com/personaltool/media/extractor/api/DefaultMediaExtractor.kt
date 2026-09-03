@@ -99,14 +99,21 @@ class DefaultMediaExtractor(
         val destFile = File(request.destinationPath)
 
         val validation = UrlClassifier.validateAndNormalize(request.sourceUrl, dnsLookup)
+        var resolvedFormatId: String? = null
+
         val directStreamUrl = if (validation is UrlValidationResult.Valid && validation.platform == MediaSource.YOUTUBE) {
-            // P2-YT-E04: Extract direct media stream URL from NewPipe
-            when (val extractResult = youtubeExtractor.extractStreamUrl(validation.normalizedUrl, request.formatId)) {
-                is AppResult.Success -> extractResult.data
+            // P2-YT-FINAL-02: Extract exact direct media stream from NewPipe
+            when (val extractResult = youtubeExtractor.extractStream(validation.normalizedUrl, request.formatId)) {
+                is AppResult.Success -> {
+                    val stream = extractResult.data
+                    resolvedFormatId = stream.formatId
+                    stream.directStreamUrl
+                }
                 is AppResult.Error -> return AppResult.Error(extractResult.message, extractResult.cause, extractResult.code)
                 AppResult.Loading -> return AppResult.Loading
             }
         } else {
+            resolvedFormatId = request.formatId
             request.sourceUrl
         }
 
@@ -128,7 +135,11 @@ class DefaultMediaExtractor(
                         durationMs = 0L,
                         fileSizeBytes = fileInfo.fileSizeBytes,
                         mimeType = fileInfo.detectedMimeType,
-                        mediaKind = fileInfo.mediaKind
+                        mediaKind = fileInfo.mediaKind,
+                        sha256Hex = fileInfo.sha256Hex,
+                        commitMethod = fileInfo.commitMethod,
+                        requestedFormatId = request.formatId,
+                        resolvedFormatId = resolvedFormatId
                     )
                 )
             }
