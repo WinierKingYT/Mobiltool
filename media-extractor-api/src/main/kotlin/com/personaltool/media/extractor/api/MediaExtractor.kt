@@ -38,10 +38,10 @@ data class DownloadedMediaResult(
     val outputFilePath: String,
     val durationMs: Long,
     val fileSizeBytes: Long,
-    val mimeType: String,
+    val mimeType: String? = null,
     val mediaKind: DetectedMediaKind = DetectedMediaKind.UNKNOWN,
-    val sha256Hex: String = "",
-    val commitMethod: String = "StandardCopyOption.ATOMIC_MOVE",
+    val sha256Hex: String? = null,
+    val commitMethod: String? = null,
     val requestedFormatId: String? = null,
     val resolvedFormatId: String? = null
 )

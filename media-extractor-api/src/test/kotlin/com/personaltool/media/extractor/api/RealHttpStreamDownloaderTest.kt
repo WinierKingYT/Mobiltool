@@ -87,7 +87,7 @@ class RealHttpStreamDownloaderTest {
         assertThat(success.file.name).isEqualTo("video.mp4")
         assertThat(success.containerType).isEqualTo(DetectedContainer.MP4_ISO_BMFF)
         assertThat(success.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN) // generic isom track is unproven
-        assertThat(success.detectedMimeType).isEqualTo("video/mp4")
+        assertThat(success.detectedMimeType).isNull()
         assertThat(success.fileSizeBytes).isEqualTo(payload.size.toLong())
         assertThat(success.sha256Hex).isNotEmpty()
         assertThat(success.requestedUrl).isEqualTo("https://cdn.example.com/video.mp4")
@@ -393,7 +393,7 @@ class RealHttpStreamDownloaderTest {
             override suspend fun probeYouTubeUrl(url: String): AppResult<MediaProbeResult> {
                 return AppResult.Error("PLATFORM_EXTRACTION_UNAVAILABLE: Video unavailable", code = ErrorCode.EXTRACTION_FAILED)
             }
-            override suspend fun extractStreamUrl(url: String, formatId: String): AppResult<String> {
+            override suspend fun extractStream(url: String, requestedFormatId: String): AppResult<com.personaltool.media.extractor.api.youtube.ResolvedPlatformStream> {
                 return AppResult.Error("Extraction failed", code = ErrorCode.EXTRACTION_FAILED)
             }
         }

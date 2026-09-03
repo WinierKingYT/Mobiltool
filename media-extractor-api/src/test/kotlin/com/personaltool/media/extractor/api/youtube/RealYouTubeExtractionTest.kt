@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import com.personaltool.core.common.result.AppResult
 import com.personaltool.core.model.media.MediaSource
 import com.personaltool.media.extractor.api.DefaultMediaExtractor
+import com.personaltool.media.extractor.api.DetectedMediaKind
 import com.personaltool.media.extractor.api.DownloadRequest
 import com.personaltool.media.extractor.api.DownloadedMediaResult
 import com.personaltool.media.extractor.api.SystemDnsLookup
@@ -110,6 +111,9 @@ class RealYouTubeExtractionTest {
         assertThat(downloaded.requestedFormatId).isEqualTo(downloaded.resolvedFormatId)
         assertThat(downloaded.commitMethod).isEqualTo("StandardCopyOption.ATOMIC_MOVE")
         assertThat(downloaded.sha256Hex).isNotEmpty()
+        // P2-TRUTH-LOCK-01: generic ISO-BMFF container does not fabricate video/mp4 when track kind is UNKNOWN
+        assertThat(downloaded.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN)
+        assertThat(downloaded.mimeType).isNull()
     }
 
     @Test

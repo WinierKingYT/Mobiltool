@@ -16,11 +16,11 @@ import org.schabi.newpipe.extractor.exceptions.ParsingException
 import org.schabi.newpipe.extractor.stream.StreamInfo
 
 /**
- * YouTube Extractor Adapter using NewPipeExtractor (P2-YT-FINAL-01..03).
+ * YouTube Extractor Adapter using NewPipeExtractor (P2-YT-FINAL-01..03, P2-TRUTH-LOCK-02).
  *
  * Invariants:
  * 1. Process-global runtime initialized via NewPipeRuntime with secured NewPipeDownloaderBridge.
- * 2. Exact format identity based on stable upstream itag identifiers (P2-YT-FINAL-02).
+ * 2. Exact format identity based strictly on valid upstream itags (P2-TRUTH-LOCK-02). Streams with itag <= 0 are omitted.
  * 3. Zero silent fallback streams (no firstAudio/firstVideo/anyStream substitutions).
  * 4. Zero leak of NewPipe internal types across adapter boundary.
  */
@@ -43,22 +43,6 @@ class NewPipeYouTubeExtractor(
                 else -> rawUrl
             }
         }
-
-        fun buildVideoFormatId(itag: Int, resolution: String?, formatSuffix: String?): String {
-            return if (itag > 0) {
-                "youtube:video:itag:$itag"
-            } else {
-                "youtube:video:${resolution ?: "unknown"}-${formatSuffix ?: "mp4"}"
-            }
-        }
-
-        fun buildAudioFormatId(itag: Int, formatSuffix: String?): String {
-            return if (itag > 0) {
-                "youtube:audio:itag:$itag"
-            } else {
-                "youtube:audio:${formatSuffix ?: "m4a"}"
-            }
-        }
     }
 
     override suspend fun probeYouTubeUrl(url: String): AppResult<MediaProbeResult> = withContext(Dispatchers.IO) {
@@ -70,54 +54,58 @@ class NewPipeYouTubeExtractor(
 
             val formats = mutableListOf<MediaFormatOption>()
 
-            // 1. Video Streams (progressive / muxed or video-only) with stable itag identities
+            // 1. Video Streams: only expose streams with valid upstream itags (P2-TRUTH-LOCK-02)
             streamInfo.videoStreams?.forEach { vStream ->
                 val itag = vStream.itag
-                val res = vStream.resolution ?: "Video"
-                val fmtName = vStream.format?.name ?: "mp4"
-                val ext = vStream.format?.suffix ?: "mp4"
-                val formatId = buildVideoFormatId(itag, res, ext)
+                if (itag > 0) {
+                    val res = vStream.resolution ?: "Video"
+                    val fmtName = vStream.format?.name ?: "mp4"
+                    val ext = vStream.format?.suffix ?: "mp4"
+                    val formatId = "youtube:video:itag:$itag"
 
-                formats.add(
-                    MediaFormatOption(
-                        formatId = formatId,
-                        ext = ext,
-                        resolution = res,
-                        note = "YouTube Video ($res $fmtName itag:$itag)",
-                        fileSizeBytes = null,
-                        isAudioOnly = false,
-                        videoCodec = vStream.codec,
-                        audioCodec = null
+                    formats.add(
+                        MediaFormatOption(
+                            formatId = formatId,
+                            ext = ext,
+                            resolution = res,
+                            note = "YouTube Video ($res $fmtName itag:$itag)",
+                            fileSizeBytes = null,
+                            isAudioOnly = false,
+                            videoCodec = vStream.codec,
+                            audioCodec = null
+                        )
                     )
-                )
+                }
             }
 
-            // 2. Audio Streams with stable itag identities
+            // 2. Audio Streams: only expose streams with valid upstream itags (P2-TRUTH-LOCK-02)
             streamInfo.audioStreams?.forEach { aStream ->
                 val itag = aStream.itag
-                val fmtName = aStream.format?.name ?: "m4a"
-                val ext = aStream.format?.suffix ?: "m4a"
-                val bitrate = aStream.averageBitrate
-                val resLabel = if (bitrate > 0) "$bitrate kbps Audio" else "Audio Stream"
-                val formatId = buildAudioFormatId(itag, ext)
+                if (itag > 0) {
+                    val fmtName = aStream.format?.name ?: "m4a"
+                    val ext = aStream.format?.suffix ?: "m4a"
+                    val bitrate = aStream.averageBitrate
+                    val resLabel = if (bitrate > 0) "$bitrate kbps Audio" else "Audio Stream"
+                    val formatId = "youtube:audio:itag:$itag"
 
-                formats.add(
-                    MediaFormatOption(
-                        formatId = formatId,
-                        ext = ext,
-                        resolution = resLabel,
-                        note = "YouTube Audio ($fmtName itag:$itag)",
-                        fileSizeBytes = null,
-                        isAudioOnly = true,
-                        videoCodec = null,
-                        audioCodec = aStream.codec
+                    formats.add(
+                        MediaFormatOption(
+                            formatId = formatId,
+                            ext = ext,
+                            resolution = resLabel,
+                            note = "YouTube Audio ($fmtName itag:$itag)",
+                            fileSizeBytes = null,
+                            isAudioOnly = true,
+                            videoCodec = null,
+                            audioCodec = aStream.codec
+                        )
                     )
-                )
+                }
             }
 
             if (formats.isEmpty()) {
                 return@withContext AppResult.Error(
-                    message = "PLATFORM_EXTRACTION_UNAVAILABLE: No playable public video or audio streams found for YouTube URL: $url",
+                    message = "PLATFORM_EXTRACTION_UNAVAILABLE: No playable public video or audio streams with stable itag identifiers found for YouTube URL: $url",
                     code = ErrorCode.EXTRACTION_FAILED
                 )
             }
@@ -174,49 +162,49 @@ class NewPipeYouTubeExtractor(
             val targetUrl = normalizeYouTubeUrl(url)
             val streamInfo = StreamInfo.getInfo(ServiceList.YouTube, targetUrl)
 
-            // P2-YT-FINAL-02: Exact format matching on stable upstream stream ID / itag
-            // 1. Search in audio streams
-            if (requestedFormatId.startsWith("youtube:audio:")) {
-                val matchingAudio = streamInfo.audioStreams?.find { aStream ->
-                    buildAudioFormatId(aStream.itag, aStream.format?.suffix) == requestedFormatId
-                }
-                if (matchingAudio != null) {
-                    val streamUrl = matchingAudio.url
-                    if (!streamUrl.isNullOrBlank()) {
-                        return@withContext AppResult.Success(
-                            ResolvedPlatformStream(
-                                formatId = requestedFormatId,
-                                directStreamUrl = streamUrl,
-                                platform = MediaSource.YOUTUBE,
-                                isAudioOnly = true,
-                                itag = matchingAudio.itag,
-                                resolution = if (matchingAudio.averageBitrate > 0) "${matchingAudio.averageBitrate} kbps" else "Audio",
-                                mimeType = matchingAudio.format?.mimeType
+            // P2-YT-FINAL-02 / P2-TRUTH-LOCK-02: Exact format matching on stable upstream itags
+            if (requestedFormatId.startsWith("youtube:audio:itag:")) {
+                val targetItag = requestedFormatId.removePrefix("youtube:audio:itag:").toIntOrNull()
+                if (targetItag != null && targetItag > 0) {
+                    val matchingAudio = streamInfo.audioStreams?.find { it.itag == targetItag }
+                    if (matchingAudio != null) {
+                        val streamUrl = matchingAudio.url
+                        if (!streamUrl.isNullOrBlank()) {
+                            return@withContext AppResult.Success(
+                                ResolvedPlatformStream(
+                                    formatId = requestedFormatId,
+                                    directStreamUrl = streamUrl,
+                                    platform = MediaSource.YOUTUBE,
+                                    isAudioOnly = true,
+                                    itag = matchingAudio.itag,
+                                    resolution = if (matchingAudio.averageBitrate > 0) "${matchingAudio.averageBitrate} kbps" else "Audio",
+                                    mimeType = matchingAudio.format?.mimeType
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }
 
-            // 2. Search in video streams
-            if (requestedFormatId.startsWith("youtube:video:")) {
-                val matchingVideo = streamInfo.videoStreams?.find { vStream ->
-                    buildVideoFormatId(vStream.itag, vStream.resolution, vStream.format?.suffix) == requestedFormatId
-                }
-                if (matchingVideo != null) {
-                    val streamUrl = matchingVideo.url
-                    if (!streamUrl.isNullOrBlank()) {
-                        return@withContext AppResult.Success(
-                            ResolvedPlatformStream(
-                                formatId = requestedFormatId,
-                                directStreamUrl = streamUrl,
-                                platform = MediaSource.YOUTUBE,
-                                isAudioOnly = false,
-                                itag = matchingVideo.itag,
-                                resolution = matchingVideo.resolution,
-                                mimeType = matchingVideo.format?.mimeType
+            if (requestedFormatId.startsWith("youtube:video:itag:")) {
+                val targetItag = requestedFormatId.removePrefix("youtube:video:itag:").toIntOrNull()
+                if (targetItag != null && targetItag > 0) {
+                    val matchingVideo = streamInfo.videoStreams?.find { it.itag == targetItag }
+                    if (matchingVideo != null) {
+                        val streamUrl = matchingVideo.url
+                        if (!streamUrl.isNullOrBlank()) {
+                            return@withContext AppResult.Success(
+                                ResolvedPlatformStream(
+                                    formatId = requestedFormatId,
+                                    directStreamUrl = streamUrl,
+                                    platform = MediaSource.YOUTUBE,
+                                    isAudioOnly = false,
+                                    itag = matchingVideo.itag,
+                                    resolution = matchingVideo.resolution,
+                                    mimeType = matchingVideo.format?.mimeType
+                                )
                             )
-                        )
+                        }
                     }
                 }
             }

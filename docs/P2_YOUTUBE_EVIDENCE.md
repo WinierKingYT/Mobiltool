@@ -25,8 +25,8 @@
 - **Stream URL Extraction Result:** `SUCCESS` (Exact format matching: `requestedFormatId == resolvedFormatId`)
 - **Binary Download Execution:** `SUCCESS` (Streamed in 32KB buffers to `.part` staging file)
 - **Observed File Size (Bytes):** `117,526` bytes
-- **Observed MIME Type:** `video/mp4`
-- **Observed Container / Media Kind:** `UNKNOWN` (Strict format decoupled from container)
+- **Observed MIME Type:** `null` (MIME Truth: Generic ISO-BMFF without track inspector does not claim video/mp4)
+- **Observed Container / Media Kind:** `MP4_ISO_BMFF` / `UNKNOWN` (Strict format decoupled from container)
 - **SHA-256 Digest:** `193a32b41614362c159652d238dfebcce6029285614828cbeb67401cd1c78111`
 - **Final Storage Commit Method:** `StandardCopyOption.ATOMIC_MOVE` (Derived dynamically from fileCommitter)
 - **Final Result:** `PASS` (Canonical file present, staging file deleted, file length = 117,526 bytes)

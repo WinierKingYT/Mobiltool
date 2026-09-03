@@ -34,7 +34,7 @@ sealed interface FileValidationResult {
         val sha256Hex: String,
         val containerType: DetectedContainer,
         val mediaKind: DetectedMediaKind,
-        val detectedMimeType: String
+        val detectedMimeType: String?
     ) : FileValidationResult
 
     data class Invalid(val reason: String) : FileValidationResult
@@ -103,7 +103,7 @@ object MediaFileValidator {
             }
         }
 
-        // 3. Container Magic Bytes Verification & Media Type Truth (P2-DIRECT-FINAL-02)
+        // 3. Container Magic Bytes Verification & Media Type Truth (P2-DIRECT-FINAL-02, P2-TRUTH-LOCK-01)
         val detection = detectContainerAndMediaKind(header, bytesRead)
             ?: return FileValidationResult.Invalid("Unrecognized binary container header; not a valid MP4/WebM/MKV/MP3/AAC/OGG/WAV/FLAC/TS media stream")
 
@@ -122,7 +122,7 @@ object MediaFileValidator {
     private data class ContainerDetection(
         val container: DetectedContainer,
         val mediaKind: DetectedMediaKind,
-        val mimeType: String
+        val mimeType: String?
     )
 
     private fun detectContainerAndMediaKind(header: ByteArray, length: Int): ContainerDetection? {
@@ -138,14 +138,13 @@ object MediaFileValidator {
             val majorBrand = String(header, 8, 4, Charsets.ISO_8859_1).trim().lowercase()
             return when {
                 majorBrand in listOf("m4a", "m4b", "m4p", "f4a", "f4b") -> {
+                    // Definite audio brand
                     ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.AUDIO, "audio/mp4")
                 }
-                majorBrand in listOf("qt", "moov") -> {
-                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.UNKNOWN, "video/quicktime")
-                }
-                // Generic ISO-BMFF (isom, mp41, mp42, dash, avc1): Track inspection not performed, kind is UNKNOWN
+                // Generic ISO-BMFF (isom, mp41, mp42, dash, avc1, qt, moov):
+                // Invariant (P2-TRUTH-LOCK-01): Without track inspection, mediaKind is UNKNOWN and MIME MUST NOT claim video or audio.
                 else -> {
-                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.UNKNOWN, "video/mp4")
+                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.UNKNOWN, null)
                 }
             }
         }
@@ -156,10 +155,8 @@ object MediaFileValidator {
             header[2] == 0xDF.toByte() &&
             header[3] == 0xA3.toByte()
         ) {
-            val headerAscii = String(header, 0, length, Charsets.ISO_8859_1).lowercase()
-            val mime = if (headerAscii.contains("webm")) "video/webm" else "video/x-matroska"
-            // Without track parser evidence, media kind is UNKNOWN
-            return ContainerDetection(DetectedContainer.MATROSKA_WEBM, DetectedMediaKind.UNKNOWN, mime)
+            // Invariant (P2-TRUTH-LOCK-01): Without track parser evidence, mediaKind is UNKNOWN and MIME is null.
+            return ContainerDetection(DetectedContainer.MATROSKA_WEBM, DetectedMediaKind.UNKNOWN, null)
         }
 
         // 3. MP3 with ID3v2 tag: "ID3" (0x49 0x44 0x33)
@@ -183,8 +180,8 @@ object MediaFileValidator {
             header[2] == 0x67.toByte() &&
             header[3] == 0x53.toByte()
         ) {
-            // Ogg container can be Vorbis audio, Opus audio, Theora video, etc. Media kind is UNKNOWN without codec header check
-            return ContainerDetection(DetectedContainer.OGG, DetectedMediaKind.UNKNOWN, "audio/ogg")
+            // Invariant (P2-TRUTH-LOCK-01): Ogg can be Vorbis audio, Opus audio, Theora video, etc. mediaKind is UNKNOWN, MIME is null.
+            return ContainerDetection(DetectedContainer.OGG, DetectedMediaKind.UNKNOWN, null)
         }
 
         // 6. RIFF WAV Container: "RIFF" .... "WAVE"
@@ -217,7 +214,8 @@ object MediaFileValidator {
             header[376] == 0x47.toByte() &&
             header[564] == 0x47.toByte()
         ) {
-            return ContainerDetection(DetectedContainer.MPEG_TS, DetectedMediaKind.UNKNOWN, "video/mp2t")
+            // Invariant (P2-TRUTH-LOCK-01): MPEG-TS transport stream can carry audio, video, or data. mediaKind is UNKNOWN, MIME is null.
+            return ContainerDetection(DetectedContainer.MPEG_TS, DetectedMediaKind.UNKNOWN, null)
         }
 
         return null

@@ -46,7 +46,7 @@ data class DownloadedFileInfo(
     val sha256Hex: String,
     val containerType: DetectedContainer,
     val mediaKind: DetectedMediaKind,
-    val detectedMimeType: String,
+    val detectedMimeType: String?,
     val requestedUrl: String,
     val finalResolvedUrl: String,
     val responseCode: Int,

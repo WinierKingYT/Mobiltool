@@ -15,7 +15,7 @@ import java.net.URI
 import java.util.concurrent.TimeUnit
 
 /**
- * Hardened NewPipe Downloader Bridge (P2-YT-FINAL-01, P2-YT-FINAL-01B).
+ * Hardened NewPipe Downloader Bridge (P2-YT-FINAL-01, P2-YT-FINAL-01B, P2-TRUTH-LOCK-04).
  *
  * Enforces strict destination security on ALL NewPipe-originated HTTP requests:
  * 1. Destination pre-validation against SSRF / private IP policies via NetworkSecurityPolicy.
@@ -23,25 +23,62 @@ import java.util.concurrent.TimeUnit
  * 3. Manual hop-by-hop redirect re-validation with cycle detection and HTTPS -> HTTP downgrade prevention.
  * 4. Standard TLS certificate and hostname verification (NO trust-all, NO hostname bypasses).
  * 5. Full support for GET, HEAD, and POST methods with preserved headers (303 -> GET, 307/308 -> preserve method).
+ * 6. Explicit test seam boundary: production bridge cannot be silently conflated with custom test transport (P2-TRUTH-LOCK-04).
  */
-class NewPipeDownloaderBridge(
-    val dnsLookup: DnsLookup = SystemDnsLookup,
-    val connectTimeoutMs: Long = 15000L,
-    val readTimeoutMs: Long = 15000L,
-    val maxRedirects: Int = 5,
-    private val clientFactory: (ValidatedDns) -> OkHttpClient = { validatedDns ->
-        OkHttpClient.Builder()
-            .dns(validatedDns)
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
-            .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
-            .build()
-    }
-) : Downloader() {
+class NewPipeDownloaderBridge : Downloader {
+
+    val dnsLookup: DnsLookup
+    val connectTimeoutMs: Long
+    val readTimeoutMs: Long
+    val maxRedirects: Int
+    val isCustomTransport: Boolean
+    private val clientFactory: (ValidatedDns) -> OkHttpClient
 
     companion object {
         const val DEFAULT_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+    }
+
+    /**
+     * Production constructor using verified standard OkHttpClient transport bound to ValidatedDns.
+     */
+    constructor(
+        dnsLookup: DnsLookup = SystemDnsLookup,
+        connectTimeoutMs: Long = 15000L,
+        readTimeoutMs: Long = 15000L,
+        maxRedirects: Int = 5
+    ) {
+        this.dnsLookup = dnsLookup
+        this.connectTimeoutMs = connectTimeoutMs
+        this.readTimeoutMs = readTimeoutMs
+        this.maxRedirects = maxRedirects
+        this.isCustomTransport = false
+        this.clientFactory = { validatedDns ->
+            OkHttpClient.Builder()
+                .dns(validatedDns)
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .connectTimeout(connectTimeoutMs, TimeUnit.MILLISECONDS)
+                .readTimeout(readTimeoutMs, TimeUnit.MILLISECONDS)
+                .build()
+        }
+    }
+
+    /**
+     * Internal test seam constructor for deterministic offline transport verification (P2-TRUTH-LOCK-04).
+     */
+    internal constructor(
+        dnsLookup: DnsLookup,
+        connectTimeoutMs: Long,
+        readTimeoutMs: Long,
+        maxRedirects: Int,
+        clientFactory: (ValidatedDns) -> OkHttpClient
+    ) {
+        this.dnsLookup = dnsLookup
+        this.connectTimeoutMs = connectTimeoutMs
+        this.readTimeoutMs = readTimeoutMs
+        this.maxRedirects = maxRedirects
+        this.isCustomTransport = true
+        this.clientFactory = clientFactory
     }
 
     override fun execute(request: Request): Response {
@@ -175,7 +212,8 @@ class NewPipeDownloaderBridge(
         return dnsLookup == other.dnsLookup &&
                 connectTimeoutMs == other.connectTimeoutMs &&
                 readTimeoutMs == other.readTimeoutMs &&
-                maxRedirects == other.maxRedirects
+                maxRedirects == other.maxRedirects &&
+                isCustomTransport == other.isCustomTransport
     }
 
     override fun hashCode(): Int {
@@ -183,6 +221,7 @@ class NewPipeDownloaderBridge(
         result = 31 * result + connectTimeoutMs.hashCode()
         result = 31 * result + readTimeoutMs.hashCode()
         result = 31 * result + maxRedirects
+        result = 31 * result + isCustomTransport.hashCode()
         return result
     }
 }

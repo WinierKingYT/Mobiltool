@@ -12,7 +12,7 @@ class MediaFileValidatorTest {
     val tempFolder = TemporaryFolder()
 
     @Test
-    fun validMp4File_passesCanonicalValidation() {
+    fun validMp4File_passesCanonicalValidation_withUnknownMimeAndKind() {
         val file = tempFolder.newFile("sample.mp4")
         FileOutputStream(file).use { fos ->
             val header = byteArrayOf(0x00, 0x00, 0x00, 0x20, 'f'.code.toByte(), 't'.code.toByte(), 'y'.code.toByte(), 'p'.code.toByte(), 'i'.code.toByte(), 's'.code.toByte(), 'o'.code.toByte(), 'm'.code.toByte())
@@ -24,7 +24,9 @@ class MediaFileValidatorTest {
         assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
         val valid = result as FileValidationResult.Valid
         assertThat(valid.containerType).isEqualTo(DetectedContainer.MP4_ISO_BMFF)
-        assertThat(valid.detectedMimeType).isEqualTo("video/mp4")
+        // P2-TRUTH-LOCK-01 Invariant: Track type unknown -> DO NOT claim video/mp4 MIME or VIDEO media kind
+        assertThat(valid.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN)
+        assertThat(valid.detectedMimeType).isNull()
         assertThat(valid.fileSizeBytes).isEqualTo(2060L)
         assertThat(valid.sha256Hex).isNotEmpty()
     }
@@ -42,6 +44,7 @@ class MediaFileValidatorTest {
         assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
         val valid = result as FileValidationResult.Valid
         assertThat(valid.containerType).isEqualTo(DetectedContainer.MP4_ISO_BMFF)
+        assertThat(valid.mediaKind).isEqualTo(DetectedMediaKind.AUDIO)
         assertThat(valid.detectedMimeType).isEqualTo("audio/mp4")
     }
 
@@ -66,7 +69,7 @@ class MediaFileValidatorTest {
     }
 
     @Test
-    fun validWebmFile_passesValidation() {
+    fun validWebmFile_passesValidation_withUnknownMimeAndKind() {
         val file = tempFolder.newFile("sample.webm")
         FileOutputStream(file).use { fos ->
             val header = byteArrayOf(0x1A.toByte(), 0x45.toByte(), 0xDF.toByte(), 0xA3.toByte())
@@ -79,7 +82,8 @@ class MediaFileValidatorTest {
         assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
         val valid = result as FileValidationResult.Valid
         assertThat(valid.containerType).isEqualTo(DetectedContainer.MATROSKA_WEBM)
-        assertThat(valid.detectedMimeType).isEqualTo("video/webm")
+        assertThat(valid.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN)
+        assertThat(valid.detectedMimeType).isNull()
     }
 
     @Test
@@ -95,11 +99,12 @@ class MediaFileValidatorTest {
         assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
         val valid = result as FileValidationResult.Valid
         assertThat(valid.containerType).isEqualTo(DetectedContainer.MP3)
+        assertThat(valid.mediaKind).isEqualTo(DetectedMediaKind.AUDIO)
         assertThat(valid.detectedMimeType).isEqualTo("audio/mpeg")
     }
 
     @Test
-    fun validMpegTs_withMultiPacketSync_passesValidation() {
+    fun validMpegTs_withMultiPacketSync_passesValidation_withUnknownMimeAndKind() {
         val file = tempFolder.newFile("stream.ts")
         val data = ByteArray(188 * 12) { 0x00 } // > 1024 bytes
         // Set sync byte 0x47 every 188 bytes
@@ -113,7 +118,8 @@ class MediaFileValidatorTest {
         assertThat(result).isInstanceOf(FileValidationResult.Valid::class.java)
         val valid = result as FileValidationResult.Valid
         assertThat(valid.containerType).isEqualTo(DetectedContainer.MPEG_TS)
-        assertThat(valid.detectedMimeType).isEqualTo("video/mp2t")
+        assertThat(valid.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN)
+        assertThat(valid.detectedMimeType).isNull()
     }
 
     @Test

@@ -8,7 +8,6 @@ import com.personaltool.core.model.media.MediaSource
 import com.personaltool.media.extractor.api.*
 import kotlinx.coroutines.test.runTest
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.fail
 import org.junit.Before
@@ -192,6 +191,9 @@ class YouTubeExtractorTest {
         assertThat(mediaResult.fileSizeBytes).isEqualTo(payload.size.toLong())
         assertThat(mediaResult.commitMethod).isEqualTo("StandardCopyOption.ATOMIC_MOVE")
         assertThat(destFile.length()).isEqualTo(payload.size.toLong())
+        // P2-TRUTH-LOCK-01: generic ISO-BMFF has UNKNOWN kind and null MIME
+        assertThat(mediaResult.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN)
+        assertThat(mediaResult.mimeType).isNull()
     }
 
     @Test
@@ -312,7 +314,13 @@ class YouTubeExtractorTest {
                 .build()
         }
 
-        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns, clientFactory = fakeClientFactory)
+        val bridge = NewPipeDownloaderBridge(
+            dnsLookup = publicDns,
+            connectTimeoutMs = 15000L,
+            readTimeoutMs = 15000L,
+            maxRedirects = 5,
+            clientFactory = fakeClientFactory
+        )
         val req = Request.newBuilder()
             .url("http://public.example.com/start")
             .httpMethod("GET")
@@ -323,7 +331,6 @@ class YouTubeExtractorTest {
             bridge.execute(req)
             fail("Expected IOException on redirect to private IP")
         } catch (e: IOException) {
-            println("Observed redirect to private IP exception: ${e.message}")
             assertThat(e.message).contains("Network policy blocked request")
         }
     }
@@ -346,7 +353,13 @@ class YouTubeExtractorTest {
                 .build()
         }
 
-        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns, clientFactory = fakeClientFactory)
+        val bridge = NewPipeDownloaderBridge(
+            dnsLookup = publicDns,
+            connectTimeoutMs = 15000L,
+            readTimeoutMs = 15000L,
+            maxRedirects = 5,
+            clientFactory = fakeClientFactory
+        )
         val req = Request.newBuilder()
             .url("http://public.example.com/start")
             .httpMethod("GET")
@@ -357,7 +370,6 @@ class YouTubeExtractorTest {
             bridge.execute(req)
             fail("Expected IOException on redirect to loopback")
         } catch (e: IOException) {
-            println("Observed redirect to loopback exception: ${e.message}")
             assertThat(e.message).contains("Network policy blocked request")
         }
     }
@@ -380,7 +392,13 @@ class YouTubeExtractorTest {
                 .build()
         }
 
-        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns, clientFactory = fakeClientFactory)
+        val bridge = NewPipeDownloaderBridge(
+            dnsLookup = publicDns,
+            connectTimeoutMs = 15000L,
+            readTimeoutMs = 15000L,
+            maxRedirects = 5,
+            clientFactory = fakeClientFactory
+        )
         val req = Request.newBuilder()
             .url("https://public.example.com/secure")
             .httpMethod("GET")
@@ -418,7 +436,13 @@ class YouTubeExtractorTest {
                 .build()
         }
 
-        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns, clientFactory = fakeClientFactory)
+        val bridge = NewPipeDownloaderBridge(
+            dnsLookup = publicDns,
+            connectTimeoutMs = 15000L,
+            readTimeoutMs = 15000L,
+            maxRedirects = 5,
+            clientFactory = fakeClientFactory
+        )
         val req = Request.newBuilder()
             .url("https://public.example.com/hop1")
             .httpMethod("GET")
@@ -453,7 +477,13 @@ class YouTubeExtractorTest {
                 .build()
         }
 
-        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns, maxRedirects = 3, clientFactory = fakeClientFactory)
+        val bridge = NewPipeDownloaderBridge(
+            dnsLookup = publicDns,
+            connectTimeoutMs = 15000L,
+            readTimeoutMs = 15000L,
+            maxRedirects = 3,
+            clientFactory = fakeClientFactory
+        )
         val req = Request.newBuilder()
             .url("https://public.example.com/step0")
             .httpMethod("GET")
@@ -488,7 +518,13 @@ class YouTubeExtractorTest {
 
         val expectedIp = InetAddress.getByName("93.184.216.34")
         val fixedDns = DnsLookup { listOf(expectedIp) }
-        val bridge = NewPipeDownloaderBridge(dnsLookup = fixedDns, clientFactory = fakeClientFactory)
+        val bridge = NewPipeDownloaderBridge(
+            dnsLookup = fixedDns,
+            connectTimeoutMs = 15000L,
+            readTimeoutMs = 15000L,
+            maxRedirects = 5,
+            clientFactory = fakeClientFactory
+        )
 
         val req = Request.newBuilder()
             .url("https://public.example.com/test")
@@ -531,7 +567,13 @@ class YouTubeExtractorTest {
                 .build()
         }
 
-        val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns, clientFactory = fakeClientFactory)
+        val bridge = NewPipeDownloaderBridge(
+            dnsLookup = publicDns,
+            connectTimeoutMs = 15000L,
+            readTimeoutMs = 15000L,
+            maxRedirects = 5,
+            clientFactory = fakeClientFactory
+        )
         val req = Request.newBuilder()
             .url("https://public.example.com/submit")
             .httpMethod("POST")
@@ -575,7 +617,13 @@ class YouTubeExtractorTest {
                     .build()
             }
 
-            val bridge = NewPipeDownloaderBridge(dnsLookup = publicDns, clientFactory = fakeClientFactory)
+            val bridge = NewPipeDownloaderBridge(
+                dnsLookup = publicDns,
+                connectTimeoutMs = 15000L,
+                readTimeoutMs = 15000L,
+                maxRedirects = 5,
+                clientFactory = fakeClientFactory
+            )
             val req = Request.newBuilder()
                 .url("https://public.example.com/post_entry")
                 .httpMethod("POST")
@@ -590,12 +638,11 @@ class YouTubeExtractorTest {
     }
 
     // ==========================================
-    // P2-YT-FINAL-02: Format Identity & Non-Fallback Tests
+    // P2-YT-FINAL-02 / P2-TRUTH-LOCK-02: Format Identity & Non-Fallback Tests
     // ==========================================
 
     @Test
     fun exactFormatIdentity_resolvesExactStreamAcrossFormatReordering() = runTest {
-        // Simulates probe returning format A, B, C; and extraction receiving reordered C, A, B
         val fakeYt = object : YouTubeExtractor {
             override suspend fun probeYouTubeUrl(url: String): AppResult<MediaProbeResult> {
                 return AppResult.Success(
@@ -613,7 +660,6 @@ class YouTubeExtractorTest {
             }
 
             override suspend fun extractStream(url: String, requestedFormatId: String): AppResult<ResolvedPlatformStream> {
-                // Reordered streams: [itag 140, itag 18, itag 22]
                 val streams = listOf(
                     ResolvedPlatformStream("youtube:audio:itag:140", "https://cdn.example.com/audio140", isAudioOnly = true, itag = 140),
                     ResolvedPlatformStream("youtube:video:itag:18", "https://cdn.example.com/video18", isAudioOnly = false, itag = 18),
@@ -628,7 +674,6 @@ class YouTubeExtractorTest {
             }
         }
 
-        // Request specifically B ("youtube:video:itag:22", index 1 in probe, index 2 in reordered extraction)
         val extractResult = fakeYt.extractStream("https://youtube.com/watch?v=test", "youtube:video:itag:22")
         assertThat(extractResult).isInstanceOf(AppResult.Success::class.java)
         val stream = (extractResult as AppResult.Success).data
@@ -661,7 +706,6 @@ class YouTubeExtractorTest {
             }
         }
 
-        // Request an audio format that is not available
         val result = fakeYt.extractStream("https://youtube.com/watch?v=test", "youtube:audio:itag:140")
         assertThat(result).isInstanceOf(AppResult.Error::class.java)
         val error = result as AppResult.Error
@@ -689,8 +733,66 @@ class YouTubeExtractorTest {
         assertThat(error.code).isEqualTo(ErrorCode.EXTRACTION_FAILED)
     }
 
+    @Test
+    fun exactFormatIdentity_unknownItagStreams_areOmittedAndFailClosedWhenAllUnknown() = runTest {
+        // P2-TRUTH-LOCK-02: Streams with itag <= 0 must not be exposed as fake stable formats
+        val fakeExtractorWithUnknownItags = object : YouTubeExtractor {
+            override suspend fun probeYouTubeUrl(url: String): AppResult<MediaProbeResult> {
+                val rawStreams = listOf(
+                    mapOf("itag" to 0, "type" to "video", "res" to "1080p"),
+                    mapOf("itag" to -1, "type" to "audio", "ext" to "m4a"),
+                    mapOf("itag" to 0, "type" to "audio", "ext" to "m4a")
+                )
+                val validFormats = rawStreams.filter { (it["itag"] as Int) > 0 }.map {
+                    MediaFormatOption(formatId = "youtube:video:itag:${it["itag"]}", ext = "mp4", resolution = "720p")
+                }
+                return if (validFormats.isEmpty()) {
+                    AppResult.Error(
+                        "PLATFORM_EXTRACTION_UNAVAILABLE: No playable public video or audio streams with stable itag identifiers found for YouTube URL: $url",
+                        code = ErrorCode.EXTRACTION_FAILED
+                    )
+                } else {
+                    AppResult.Success(
+                        MediaProbeResult(
+                            url = url,
+                            title = "Test",
+                            sourcePlatform = MediaSource.YOUTUBE,
+                            availableFormats = validFormats
+                        )
+                    )
+                }
+            }
+
+            override suspend fun extractStream(url: String, requestedFormatId: String): AppResult<ResolvedPlatformStream> {
+                return AppResult.Error("No valid stream", code = ErrorCode.EXTRACTION_FAILED)
+            }
+        }
+
+        val result = fakeExtractorWithUnknownItags.probeYouTubeUrl("https://youtube.com/watch?v=all_unknown_itags")
+        assertThat(result).isInstanceOf(AppResult.Error::class.java)
+        val error = result as AppResult.Error
+        assertThat(error.code).isEqualTo(ErrorCode.EXTRACTION_FAILED)
+        assertThat(error.message).contains("No playable public video or audio streams with stable itag identifiers")
+    }
+
+    @Test
+    fun downloadedMediaResult_doesNotFabricateDefaultEvidence() {
+        // P2-TRUTH-LOCK-03: Data model must not fabricate execution evidence via defaults
+        val emptyResult = DownloadedMediaResult(
+            downloadId = "test-1",
+            outputFilePath = "/tmp/media.mp4",
+            durationMs = 0L,
+            fileSizeBytes = 1000L
+        )
+        assertThat(emptyResult.commitMethod).isNull()
+        assertThat(emptyResult.sha256Hex).isNull()
+        assertThat(emptyResult.mimeType).isNull()
+        assertThat(emptyResult.requestedFormatId).isNull()
+        assertThat(emptyResult.resolvedFormatId).isNull()
+    }
+
     // ==========================================
-    // P2-YT-FINAL-03: Global NewPipe Runtime Tests
+    // P2-YT-FINAL-03 / P2-TRUTH-LOCK-04: Global NewPipe Runtime Tests
     // ==========================================
 
     @Test
@@ -718,6 +820,31 @@ class YouTubeExtractorTest {
         try {
             NewPipeRuntime.ensureInitialized(differentBridge)
             fail("Expected IllegalStateException when re-initializing with different bridge")
+        } catch (e: IllegalStateException) {
+            assertThat(e.message).contains("NewPipeRuntime already initialized with a different DownloaderBridge")
+        }
+    }
+
+    @Test
+    fun newPipeRuntime_customTestTransportVsProductionBridge_throwsIllegalStateException() {
+        // P2-TRUTH-LOCK-04: Production bridge vs custom test transport bridge are distinct and incompatible
+        val prodBridge = NewPipeDownloaderBridge(dnsLookup = publicDns)
+        val testTransportBridge = NewPipeDownloaderBridge(
+            dnsLookup = publicDns,
+            connectTimeoutMs = 15000L,
+            readTimeoutMs = 15000L,
+            maxRedirects = 5,
+            clientFactory = { dns -> OkHttpClient.Builder().dns(dns).build() }
+        )
+
+        assertThat(prodBridge.isCustomTransport).isFalse()
+        assertThat(testTransportBridge.isCustomTransport).isTrue()
+
+        NewPipeRuntime.ensureInitialized(prodBridge)
+
+        try {
+            NewPipeRuntime.ensureInitialized(testTransportBridge)
+            fail("Expected IllegalStateException when re-initializing with custom test transport bridge")
         } catch (e: IllegalStateException) {
             assertThat(e.message).contains("NewPipeRuntime already initialized with a different DownloaderBridge")
         }
