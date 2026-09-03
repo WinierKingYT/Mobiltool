@@ -26,7 +26,7 @@ enum class DownloadStatus {
 
 data class MediaFormatOption(
     val formatId: String,
-    val ext: String,
+    val ext: String? = null,
     val resolution: String? = null,
     val note: String? = null,
     val fileSizeBytes: Long? = null,

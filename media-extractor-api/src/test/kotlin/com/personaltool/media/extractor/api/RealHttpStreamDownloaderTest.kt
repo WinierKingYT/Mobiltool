@@ -424,4 +424,197 @@ class RealHttpStreamDownloaderTest {
         assertThat(error.message).contains("PLATFORM_EXTRACTION_UNAVAILABLE")
         assertThat(error.code).isEqualTo(ErrorCode.EXTRACTION_FAILED)
     }
+
+    @Test
+    fun extractor_probeDirectUrl_htmlWebpage_failsClosedWithoutAdvertisingFormat() = runTest {
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return AppResult.Success(
+                    SafeHttpResponse(
+                        response = null,
+                        responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                        contentLength = 2048L,
+                        contentType = "text/html; charset=UTF-8",
+                        requestedUrl = initialUrl,
+                        finalUrl = initialUrl,
+                        responseCode = 200,
+                        redirectCount = 0
+                    )
+                )
+            }
+        }
+
+        val fakeProberDownloader = RealHttpStreamDownloader(
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+        val extractor = DefaultMediaExtractor(
+            dnsLookup = publicDns,
+            streamDownloader = fakeProberDownloader
+        )
+
+        // Directly test probe with transport engine rejecting HTML
+        val probeResult = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://example.com/login.html",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+        assertThat(probeResult).isInstanceOf(AppResult.Error::class.java)
+        val error = probeResult as AppResult.Error
+        assertThat(error.message).contains("non-media Content-Type 'text/html")
+    }
+
+    @Test
+    fun extractor_probeDirectUrl_jsonResponse_failsClosedWithoutAdvertisingFormat() = runTest {
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return AppResult.Success(
+                    SafeHttpResponse(
+                        response = null,
+                        responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                        contentLength = 100L,
+                        contentType = "application/json",
+                        requestedUrl = initialUrl,
+                        finalUrl = initialUrl,
+                        responseCode = 200,
+                        redirectCount = 0
+                    )
+                )
+            }
+        }
+
+        val probeResult = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://example.com/api/data",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+        assertThat(probeResult).isInstanceOf(AppResult.Error::class.java)
+        val error = probeResult as AppResult.Error
+        assertThat(error.message).contains("non-media Content-Type 'application/json'")
+    }
+
+    @Test
+    fun extractor_probeDirectUrl_unknownBinary_failsClosedWithoutAdvertisingFormat() = runTest {
+        val unknownBytes = ByteArray(1024) { 0xAA.toByte() }
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return if (method == "HEAD") {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                            contentLength = unknownBytes.size.toLong(),
+                            contentType = "application/octet-stream",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 200,
+                            redirectCount = 0
+                        )
+                    )
+                } else {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(unknownBytes),
+                            contentLength = unknownBytes.size.toLong(),
+                            contentType = "application/octet-stream",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 206,
+                            redirectCount = 0
+                        )
+                    )
+                }
+            }
+        }
+
+        val probeResult = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://example.com/unknown.bin",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+        assertThat(probeResult).isInstanceOf(AppResult.Error::class.java)
+        val error = probeResult as AppResult.Error
+        assertThat(error.message).contains("Unrecognized binary container")
+    }
+
+    @Test
+    fun extractor_probeDirectUrl_validMp4_advertisesAccurateFormat() = runTest {
+        val mp4Bytes = createValidMp4Payload()
+        val fakeTransport = object : SafeHttpTransportEngine {
+            override fun openSafeConnection(
+                initialUrl: String,
+                method: String,
+                headers: Map<String, String>,
+                maxRedirects: Int,
+                connectTimeoutMs: Long,
+                readTimeoutMs: Long,
+                dnsLookup: DnsLookup
+            ): AppResult<SafeHttpResponse> {
+                return if (method == "HEAD") {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(ByteArray(0)),
+                            contentLength = mp4Bytes.size.toLong(),
+                            contentType = "video/mp4",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 200,
+                            redirectCount = 0
+                        )
+                    )
+                } else {
+                    AppResult.Success(
+                        SafeHttpResponse(
+                            response = null,
+                            responseBodyStream = ByteArrayInputStream(mp4Bytes),
+                            contentLength = mp4Bytes.size.toLong(),
+                            contentType = "video/mp4",
+                            requestedUrl = initialUrl,
+                            finalUrl = initialUrl,
+                            responseCode = 206,
+                            redirectCount = 0
+                        )
+                    )
+                }
+            }
+        }
+
+        val probeResult = HttpMediaProber.probeDirectMediaUrl(
+            urlString = "https://cdn.example.com/video.mp4",
+            dnsLookup = publicDns,
+            transportEngine = fakeTransport
+        )
+        assertThat(probeResult).isInstanceOf(AppResult.Success::class.java)
+        val probe = (probeResult as AppResult.Success).data
+        assertThat(probe.containerType).isEqualTo(DetectedContainer.MP4_ISO_BMFF)
+        assertThat(probe.provenExtension).isEqualTo("mp4")
+        assertThat(probe.mediaKind).isEqualTo(DetectedMediaKind.UNKNOWN)
+        assertThat(probe.contentLength).isEqualTo(mp4Bytes.size.toLong())
+    }
 }

@@ -248,7 +248,7 @@ fun MediaIntakeScreen(
                                 color = colors.textPrimary
                             )
                             Text(
-                                text = format.note ?: format.ext,
+                                text = format.note ?: format.ext ?: format.formatId,
                                 style = typography.monoSmall,
                                 color = colors.textMuted
                             )

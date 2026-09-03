@@ -81,13 +81,57 @@ object MediaFileValidator {
 
         val headerString = String(header, 0, bytesRead, Charsets.ISO_8859_1).lowercase()
 
+        // 1. Explicit Header Inspection (HTML, JSON, and container magic bytes)
+        val inspection = inspectHeaderBytes(header, bytesRead)
+        val validDetection = when (inspection) {
+            is HeaderValidationResult.ValidMedia -> inspection
+            is HeaderValidationResult.Invalid -> return FileValidationResult.Invalid(inspection.reason)
+        }
+
+        val sha256 = calculateSha256(file)
+
+        return FileValidationResult.Valid(
+            fileSizeBytes = size,
+            extension = ext,
+            sha256Hex = sha256,
+            containerType = validDetection.container,
+            mediaKind = validDetection.mediaKind,
+            detectedMimeType = validDetection.mimeType
+        )
+    }
+
+    data class ContainerDetection(
+        val container: DetectedContainer,
+        val mediaKind: DetectedMediaKind,
+        val mimeType: String?,
+        val defaultExtension: String?
+    )
+
+    sealed interface HeaderValidationResult {
+        data class ValidMedia(
+            val container: DetectedContainer,
+            val mediaKind: DetectedMediaKind,
+            val mimeType: String?,
+            val defaultExtension: String?
+        ) : HeaderValidationResult
+
+        data class Invalid(val reason: String) : HeaderValidationResult
+    }
+
+    fun inspectHeaderBytes(header: ByteArray, bytesRead: Int): HeaderValidationResult {
+        if (bytesRead < 8) {
+            return HeaderValidationResult.Invalid("File header is too short ($bytesRead bytes) to verify container structure")
+        }
+
+        val headerString = String(header, 0, bytesRead, Charsets.ISO_8859_1).lowercase()
+
         // 1. Explicit HTML Rejection
         if (headerString.contains("<!doctype html") ||
             headerString.contains("<html") ||
             headerString.contains("<head") ||
             headerString.contains("<body")
         ) {
-            return FileValidationResult.Invalid("File contains HTML markup rather than binary media payload (e.g. error or login page)")
+            return HeaderValidationResult.Invalid("Payload contains HTML markup rather than binary media stream (e.g. error or login page)")
         }
 
         // 2. Explicit JSON Error / Challenge Rejection
@@ -99,33 +143,23 @@ object MediaFileValidator {
                 trimmedHeader.contains("\"captcha\"") ||
                 trimmedHeader.contains("\"status\"")
             ) {
-                return FileValidationResult.Invalid("File contains JSON error or challenge payload rather than media stream")
+                return HeaderValidationResult.Invalid("Payload contains JSON error or challenge payload rather than media stream")
             }
         }
 
         // 3. Container Magic Bytes Verification & Media Type Truth (P2-DIRECT-FINAL-02, P2-TRUTH-LOCK-01)
         val detection = detectContainerAndMediaKind(header, bytesRead)
-            ?: return FileValidationResult.Invalid("Unrecognized binary container header; not a valid MP4/WebM/MKV/MP3/AAC/OGG/WAV/FLAC/TS media stream")
+            ?: return HeaderValidationResult.Invalid("Unrecognized binary container header; not a valid MP4/WebM/MKV/MP3/AAC/OGG/WAV/FLAC/TS media stream")
 
-        val sha256 = calculateSha256(file)
-
-        return FileValidationResult.Valid(
-            fileSizeBytes = size,
-            extension = ext,
-            sha256Hex = sha256,
-            containerType = detection.container,
+        return HeaderValidationResult.ValidMedia(
+            container = detection.container,
             mediaKind = detection.mediaKind,
-            detectedMimeType = detection.mimeType
+            mimeType = detection.mimeType,
+            defaultExtension = detection.defaultExtension
         )
     }
 
-    private data class ContainerDetection(
-        val container: DetectedContainer,
-        val mediaKind: DetectedMediaKind,
-        val mimeType: String?
-    )
-
-    private fun detectContainerAndMediaKind(header: ByteArray, length: Int): ContainerDetection? {
+    fun detectContainerAndMediaKind(header: ByteArray, length: Int): ContainerDetection? {
         if (length < 4) return null
 
         // 1. ISO BMFF / MP4 / M4A / MOV (ftyp box at offset 4)
@@ -139,12 +173,12 @@ object MediaFileValidator {
             return when {
                 majorBrand in listOf("m4a", "m4b", "m4p", "f4a", "f4b") -> {
                     // Definite audio brand
-                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.AUDIO, "audio/mp4")
+                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.AUDIO, "audio/mp4", "m4a")
                 }
                 // Generic ISO-BMFF (isom, mp41, mp42, dash, avc1, qt, moov):
                 // Invariant (P2-TRUTH-LOCK-01): Without track inspection, mediaKind is UNKNOWN and MIME MUST NOT claim video or audio.
                 else -> {
-                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.UNKNOWN, null)
+                    ContainerDetection(DetectedContainer.MP4_ISO_BMFF, DetectedMediaKind.UNKNOWN, null, "mp4")
                 }
             }
         }
@@ -156,7 +190,7 @@ object MediaFileValidator {
             header[3] == 0xA3.toByte()
         ) {
             // Invariant (P2-TRUTH-LOCK-01): Without track parser evidence, mediaKind is UNKNOWN and MIME is null.
-            return ContainerDetection(DetectedContainer.MATROSKA_WEBM, DetectedMediaKind.UNKNOWN, null)
+            return ContainerDetection(DetectedContainer.MATROSKA_WEBM, DetectedMediaKind.UNKNOWN, null, "webm")
         }
 
         // 3. MP3 with ID3v2 tag: "ID3" (0x49 0x44 0x33)
@@ -164,14 +198,14 @@ object MediaFileValidator {
             header[1] == 0x44.toByte() &&
             header[2] == 0x33.toByte()
         ) {
-            return ContainerDetection(DetectedContainer.MP3, DetectedMediaKind.AUDIO, "audio/mpeg")
+            return ContainerDetection(DetectedContainer.MP3, DetectedMediaKind.AUDIO, "audio/mpeg", "mp3")
         }
 
         // 4. MP3 without ID3 tag (MPEG audio sync word: 0xFF 0xFB, 0xFF 0xF3, 0xFF 0xF2)
         val b0 = header[0].toInt() and 0xFF
         val b1 = header[1].toInt() and 0xFF
         if (b0 == 0xFF && (b1 and 0xE0) == 0xE0 && (b1 and 0x06) != 0x00) {
-            return ContainerDetection(DetectedContainer.MP3, DetectedMediaKind.AUDIO, "audio/mpeg")
+            return ContainerDetection(DetectedContainer.MP3, DetectedMediaKind.AUDIO, "audio/mpeg", "mp3")
         }
 
         // 5. Ogg Container: "OggS" (0x4F 0x67 0x67 0x53)
@@ -181,7 +215,7 @@ object MediaFileValidator {
             header[3] == 0x53.toByte()
         ) {
             // Invariant (P2-TRUTH-LOCK-01): Ogg can be Vorbis audio, Opus audio, Theora video, etc. mediaKind is UNKNOWN, MIME is null.
-            return ContainerDetection(DetectedContainer.OGG, DetectedMediaKind.UNKNOWN, null)
+            return ContainerDetection(DetectedContainer.OGG, DetectedMediaKind.UNKNOWN, null, "ogg")
         }
 
         // 6. RIFF WAV Container: "RIFF" .... "WAVE"
@@ -195,7 +229,7 @@ object MediaFileValidator {
             header[10] == 'V'.code.toByte() &&
             header[11] == 'E'.code.toByte()
         ) {
-            return ContainerDetection(DetectedContainer.WAV, DetectedMediaKind.AUDIO, "audio/wav")
+            return ContainerDetection(DetectedContainer.WAV, DetectedMediaKind.AUDIO, "audio/wav", "wav")
         }
 
         // 7. FLAC: "fLaC" (0x66 0x4C 0x61 0x43)
@@ -204,7 +238,7 @@ object MediaFileValidator {
             header[2] == 0x61.toByte() &&
             header[3] == 0x43.toByte()
         ) {
-            return ContainerDetection(DetectedContainer.FLAC, DetectedMediaKind.AUDIO, "audio/flac")
+            return ContainerDetection(DetectedContainer.FLAC, DetectedMediaKind.AUDIO, "audio/flac", "flac")
         }
 
         // 8. MPEG-TS: Check consecutive 188-byte packet sync markers (0x47)
@@ -215,7 +249,7 @@ object MediaFileValidator {
             header[564] == 0x47.toByte()
         ) {
             // Invariant (P2-TRUTH-LOCK-01): MPEG-TS transport stream can carry audio, video, or data. mediaKind is UNKNOWN, MIME is null.
-            return ContainerDetection(DetectedContainer.MPEG_TS, DetectedMediaKind.UNKNOWN, null)
+            return ContainerDetection(DetectedContainer.MPEG_TS, DetectedMediaKind.UNKNOWN, null, "ts")
         }
 
         return null

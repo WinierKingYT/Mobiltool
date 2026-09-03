@@ -60,7 +60,8 @@ class RealHttpMediaDownloader(private val context: Context) {
         val downloadId = UUID.randomUUID().toString()
         val mediaDir = File(context.filesDir, "media").apply { mkdirs() }
         val ext = selectedFormat.ext
-        val outputFile = File(mediaDir, "media_${downloadId}.$ext")
+        val fileName = if (!ext.isNullOrBlank()) "media_${downloadId}.$ext" else "media_${downloadId}"
+        val outputFile = File(mediaDir, fileName)
 
         val isAudio = selectedFormat.isAudioOnly
         val request = DownloadRequest(

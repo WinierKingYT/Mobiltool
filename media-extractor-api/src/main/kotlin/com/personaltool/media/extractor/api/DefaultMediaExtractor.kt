@@ -41,9 +41,15 @@ class DefaultMediaExtractor(
                 when (probeResult) {
                     is AppResult.Success -> {
                         val probe = probeResult.data
-                        val size = if (probe.contentLength > 0) probe.contentLength else 0L
-                        val ext = probe.suggestedFileName.substringAfterLast('.', "mp4")
-                        val isAudio = probe.contentType?.contains("audio", ignoreCase = true) == true
+                        val size = if (probe.contentLength > 0L) probe.contentLength else null
+                        val ext = probe.provenExtension
+                        val isAudio = probe.mediaKind == DetectedMediaKind.AUDIO
+                        val isVideo = probe.mediaKind == DetectedMediaKind.VIDEO
+                        val resolutionLabel = when {
+                            isAudio -> "Direct Audio Stream"
+                            isVideo -> "Direct Video Stream"
+                            else -> "Direct Media Stream"
+                        }
 
                         AppResult.Success(
                             MediaProbeResult(
@@ -57,8 +63,8 @@ class DefaultMediaExtractor(
                                     MediaFormatOption(
                                         formatId = "direct-orig",
                                         ext = ext,
-                                        resolution = if (isAudio) "Direct Audio Stream" else "Direct Stream",
-                                        note = probe.contentType ?: "Direct HTTP Media",
+                                        resolution = resolutionLabel,
+                                        note = probe.contentType ?: probe.verifiedMimeType ?: "Direct HTTP Media",
                                         fileSizeBytes = size,
                                         isAudioOnly = isAudio
                                     )
