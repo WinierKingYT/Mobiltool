@@ -4,7 +4,7 @@
 
 ```text
 ACTIVE_PART = P3
-STATUS = IN_PROGRESS (Software Remediation Complete, Physical Qualification Pending)
+STATUS = LOCKED / PASS (Software & Physical Device Qualification Complete)
 PREVIOUS PARTS = P0 (LOCKED/PASS), P1 (LOCKED/TRUTH-LOCKED), P2 (LOCKED/PASS)
 FUTURE PARTS = P4+ (LOCKED)
 ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
@@ -56,7 +56,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
   - `AudioPlaybackSheet`: Industrial-styled Compose audio playback UI surface.
 * **Evidence Labels**:
   - `AUDIO INTERRUPTION CONTRACT TESTS`: **PASS**
-  - `ANDROID AUDIO FOCUS ENGINE INTEGRATION`: **CODE_REVIEWED_NOT_RUNTIME_TESTED**
+  - `ANDROID AUDIO FOCUS ENGINE INTEGRATION`: **PASS** (Physical hardware tested on SM-S901E)
   - `SEEK TRUTH / FAIL-CLOSED INVARIANT`: **PASS** (Seek failure rejects state change and aborts play-after-seek)
   - `TRANSCRIPT POSITION DERIVATION`: **PASS** (Derives active cue dynamically from verified audio position)
 
@@ -99,13 +99,16 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 ## 5. Physical Device Gate Status
 
 * **Target Hardware**:
-  - Samsung Galaxy S22 (`SM-S901E`, Android 16 / SDK 36)
+  - Samsung Galaxy S22 (`SM-S901E`, Android 16 / SDK 36, product: `r0qxtur`, device: `r0q`)
+  - Fingerprint: `samsung/r0qxtur/r0q:16/BP2A.250605.031.A3/S901EXXSCGZA2:user/release-keys`
 * **Build Verification**:
   - `.\gradlew.bat clean assembleDebug`: **PASS**
 * **Physical Device Runtime Status**:
-  - `PHYSICAL DEVICE CONNECTIVITY`: **DISCONNECTED / AWAITING_CONNECTION**
-  - `BUILD COMPILATION & PACKAGING`: **PASS** (`assembleDebug` succeeded)
-  - `PHYSICAL PLAYBACK QUALIFICATION`: **AWAITING_PHYSICAL_QUALIFICATION_AT_USER_ACCEPTANCE**
+  - `PHYSICAL DEVICE CONNECTIVITY`: **CONNECTED & VERIFIED**
+  - `BUILD COMPILATION & PACKAGING`: **PASS** (`app-debug.apk` installed successfully)
+  - `PHYSICAL AUDIO PLAYBACK QUALIFICATION`: **PASS** (Audio tone verified, position advancement, pause/resume, seek, speed, completion, replay, clean release)
+  - `PHYSICAL VIDEO PLAYBACK QUALIFICATION`: **PASS** (Moving frames animation verified, stereo audio verified, position advancement, pause/resume, seek, speed, completion, replay, clean release)
+  - `HUMAN OBSERVATION CONFIRMATION`: **PASS** (Confirmed: moving frames present, video audio present, audio tone present, clean playback stop on close)
 
 ---
 
@@ -114,7 +117,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 * `P0 = LOCKED / PASS`
 * `P1 = LOCKED / TRUTH-LOCKED`
 * `P2 = LOCKED / PASS`
-* `P3 = ACTIVE / IN_PROGRESS`
-* `P4 = LOCKED` (Speech-to-Text / Whisper untouched)
+* `P3 = LOCKED / PASS`
+* `P4 = LOCKED / AWAITING USER ACTIVATION` (Local Transcription untouched)
 * `P5+ = LOCKED`
 * `ROOM DB SCHEMA = 1` (Zero entity/DAO/table modifications)

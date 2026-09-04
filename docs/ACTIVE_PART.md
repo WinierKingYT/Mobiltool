@@ -2,7 +2,7 @@
 
 ```text
 ACTIVE_PART = P3
-STATUS = IN_PROGRESS
+STATUS = LOCKED / PASS
 ```
 
 ## Part Sequencing & Lifecycle State:
@@ -17,11 +17,12 @@ STATUS = IN_PROGRESS
   - YouTube (ADR_002 APPROVED): SUPPORTED / QUALIFIED FOR PUBLIC CONTENT (`NewPipeExtractor:v0.26.5` behind strict `YouTubeExtractor` adapter + Mobiltool verified atomic downloader)
   - Instagram & X (Twitter): EXTRACTION_UNAVAILABLE / NOT APPROVED (Fails closed with `ErrorCode.EXTRACTION_FAILED`)
   - Verification: 100% deterministic offline suite (`.\gradlew.bat test`), live qualification tasks (`realDirectMediaTest`, `realYouTubeExtractionTest`)
-- **P3: Library & Playback** - ACTIVE / IN_PROGRESS (Software Remediation Complete, Physical Device Gate Pending)
+- **P3: Library & Playback** - LOCKED / PASS
   - Unified Vault: Reactive Room DB combine (`CallEntity` + `MediaEntity`), fast bounded-prefix file inspection (<= 768 bytes, zero SHA-256 in UI thread), two-stage pipeline (zero disk I/O on query/filtering).
   - Audio Playback: Full lifecycle coroutine controller (`AudioPlaybackController`), `sessionGeneration`, fail-closed seek, audio focus interruption handling, speed control (0.5x..2.0x), transcript position synchronization, industrial UI playback sheet.
   - Video Playback: Media3 ExoPlayer 1.5.1 engine (`AndroidMedia3VideoEngine`), `VideoPlaybackController` with authoritative `VideoPlaybackActivity` state engine, asynchronous seek discontinuity confirmation, action-time preflight validation (`VideoPlaybackSource` checking container signatures, size match, `NOT_READY` precedence), setup leak protection, replay rewind confirmation tolerance, decoupled metadata updates, buffering-to-paused resilience, and fullscreen HUD viewer (`VideoPlaybackViewer`).
   - Verification: 277/277 unit tests passing across 31 unique suites, clean `assembleDebug`.
+  - Physical Target: Samsung Galaxy S22 (`SM-S901E`, Android 16 / SDK 36) — Hardware audio & video playback, moving frames, audible audio, lifecycle transitions, and release verified.
 - **P4: Local Transcription** - LOCKED / AWAITING USER ACTIVATION
 - **P5+: Core Foundation, Dev Bridge, Remote Desktop** - LOCKED
 
@@ -50,5 +51,5 @@ STATUS = IN_PROGRESS
 * **Audio Interruption Tests**: PASS
 * **Android Audio Focus Engine Integration**: CODE_REVIEWED_NOT_RUNTIME_TESTED
 * **Media3 ExoPlayer Integration**: PASS (Code reviewed & unit tested with 33 controller tests)
-* **Physical Playback Qualification**: AWAITING_PHYSICAL_QUALIFICATION_AT_USER_ACCEPTANCE
+* **Physical Playback Qualification**: PASS / QUALIFIED (Hardware validated on SM-S901E)
 * **GitHub CI**: NOT CONFIGURED / NO REMOTE STATUS CHECK EVIDENCE
