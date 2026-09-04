@@ -46,6 +46,22 @@
 
 ---
 
+### Case 3: Public Video URL with Playlist, Index, and Tracking Parameters
+- **Target URL:** `https://www.youtube.com/watch?v=UrLVxJWdGqY&list=RDUrLVxJWdGqY&index=1`
+- **Canonical Normalized URL:** `https://www.youtube.com/watch?v=UrLVxJWdGqY`
+- **Extracted Video ID:** `UrLVxJWdGqY` (11-character base64url validated)
+- **Observed Title:** `Ludwig Göransson - Sirens (Slowed)`
+- **Observed Duration:** `200000 ms`
+- **Observed Uploader:** `Maxslowed`
+- **Observed Formats Count:** `6` (`[youtube:video:itag:18, youtube:audio:itag:139, youtube:audio:itag:140, youtube:audio:itag:249, youtube:audio:itag:250, youtube:audio:itag:251]`)
+- **Requested Format ID:** `youtube:video:itag:18`
+- **Resolved Format ID:** `youtube:video:itag:18`
+- **Stream Host:** `rr3---sn-u0g3uxax3-pnues.googlevideo.com`
+- **Stream Resolution Result:** `SUCCESS` (Direct googlevideo stream resolved; exact format match confirmed)
+- **Final Result:** `PASS`
+
+---
+
 ## 2. Platform Extraction Invariant Verification
 
 | Platform | Approval Status | Extractor Adapter | Production Behavior |

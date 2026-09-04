@@ -158,4 +158,57 @@ class RealYouTubeExtractionTest {
         assertThat(resolvedStream.formatId).isEqualTo(selectedFormat.formatId)
         assertThat(resolvedStream.directStreamUrl).isNotEmpty()
     }
+
+    @Test
+    fun executeRealPublicYouTubeComplexUrlWithPlaylistAndQueryParamsExtraction() = runBlocking {
+        val complexUrl = "https://www.youtube.com/watch?v=UrLVxJWdGqY&list=RDUrLVxJWdGqY&index=1"
+        val ytExtractor = NewPipeYouTubeExtractor(dnsLookup = SystemDnsLookup)
+        val defaultExtractor = DefaultMediaExtractor(dnsLookup = SystemDnsLookup, youtubeExtractor = ytExtractor)
+
+        println("=== STARTING REAL YOUTUBE COMPLEX URL EXTRACTION TEST ===")
+        println("Target Complex URL: $complexUrl")
+
+        val probeResult = defaultExtractor.probeUrl(complexUrl)
+        assertThat(probeResult).isInstanceOf(AppResult.Success::class.java)
+        val probe = (probeResult as AppResult.Success).data
+
+        println("CANONICAL URL: ${probe.url}")
+        println("TITLE OBSERVED: ${probe.title}")
+        println("DURATION OBSERVED: ${probe.durationMs} ms")
+        println("UPLOADER: ${probe.uploader}")
+        println("AVAILABLE FORMAT COUNT: ${probe.availableFormats.size}")
+
+        assertThat(probe.url).isEqualTo("https://www.youtube.com/watch?v=UrLVxJWdGqY")
+        assertThat(probe.sourcePlatform).isEqualTo(MediaSource.YOUTUBE)
+        assertThat(probe.availableFormats).isNotEmpty()
+
+        val selectedFormat = probe.availableFormats.first()
+        val extractResult = ytExtractor.extractStream(complexUrl, selectedFormat.formatId)
+        assertThat(extractResult).isInstanceOf(AppResult.Success::class.java)
+        val resolvedStream = (extractResult as AppResult.Success).data
+
+        val streamHost = try {
+            URI(resolvedStream.directStreamUrl).host ?: "unknown"
+        } catch (e: Exception) {
+            "unparseable"
+        }
+
+        println("=== REAL YOUTUBE COMPLEX URL EVIDENCE RECORD ===")
+        println("DATE: 2026-09-04")
+        println("RAW URL: $complexUrl")
+        println("CANONICAL URL: ${probe.url}")
+        println("NEWPIPE VERSION: v0.26.5")
+        println("TITLE: ${probe.title}")
+        println("DURATION: ${probe.durationMs} ms")
+        println("UPLOADER: ${probe.uploader}")
+        println("AVAILABLE FORMATS: ${probe.availableFormats.map { it.formatId }}")
+        println("REQUESTED FORMAT ID: ${selectedFormat.formatId}")
+        println("RESOLVED FORMAT ID: ${resolvedStream.formatId}")
+        println("STREAM RESOLUTION RESULT: SUCCESS (Direct $streamHost stream resolved)")
+        println("================================================")
+
+        assertThat(resolvedStream.formatId).isEqualTo(selectedFormat.formatId)
+        assertThat(resolvedStream.directStreamUrl).isNotEmpty()
+    }
 }
+
