@@ -222,8 +222,10 @@ class TranscriptViewModel(
         if (controller.state.value.targetId != state.targetId) {
             controller.openAudio(state.targetId ?: "", state.targetTitle, state.audioFilePath)
         }
-        controller.seekTo(segment.startTimeMs)
-        controller.play()
+        val sought = controller.seekTo(segment.startTimeMs)
+        if (sought) {
+            controller.play()
+        }
     }
 
     fun findActiveSegment(segments: List<TranscriptSegment>?, positionMs: Long): String? {

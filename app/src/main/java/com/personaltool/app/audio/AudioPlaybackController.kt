@@ -161,16 +161,19 @@ class AudioPlaybackController(
         }
     }
 
-    fun play() {
+    fun play(): Boolean {
         val current = _state.value
-        if (!current.canPlay) return
+        if (!current.canPlay) return false
 
         val currentGen = sessionGeneration
-        val activeEngine = engine ?: return
+        val activeEngine = engine ?: return false
 
-        // If completed, seek back to 0 before restarting
+        // If completed, seek back to 0 before restarting; fail closed if rewind fails
         if (current.phase == AudioPlaybackPhase.COMPLETED) {
-            activeEngine.seekTo(0L)
+            val rewound = activeEngine.seekTo(0L)
+            if (!rewound) {
+                return false
+            }
             _state.update { it.copy(currentPositionMs = 0L) }
         }
 
@@ -178,7 +181,9 @@ class AudioPlaybackController(
         if (started) {
             _state.update { it.copy(phase = AudioPlaybackPhase.PLAYING) }
             startProgressPolling(currentGen, activeEngine)
+            return true
         }
+        return false
     }
 
     fun pause() {

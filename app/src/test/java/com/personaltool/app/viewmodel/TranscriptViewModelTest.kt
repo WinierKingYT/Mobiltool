@@ -309,6 +309,26 @@ class TranscriptViewModelTest {
         assertThat(viewModel.uiState.value.isPlaying).isTrue()
     }
 
+    @Test
+    fun seekToSegment_whenSeekFails_doesNotStartPlaybackAndRetainsPosition() {
+        val file = createTempAudioFile()
+        val viewModel = createViewModel()
+
+        viewModel.openTranscript("target-1", "Alice", file.absolutePath, 10000L)
+        fakeEngine.triggerPrepared(10000L)
+
+        // Force seek failure
+        fakeEngine.shouldFailSeek = true
+
+        val segment = TranscriptSegment(id = "s-2", startTimeMs = 5001L, endTimeMs = 10000L, text = "world")
+        viewModel.seekToSegment(segment)
+
+        assertThat(audioController.state.value.currentPositionMs).isEqualTo(0L)
+        assertThat(audioController.state.value.phase).isEqualTo(AudioPlaybackPhase.READY)
+        assertThat(viewModel.uiState.value.isPlaying).isFalse()
+        assertThat(viewModel.uiState.value.activeSegmentId).isNotEqualTo("s-2")
+    }
+
     // ==========================================
     // P3-E04-FINAL-03 & 05: INTERRUPTIONS & PRESENTATION OWNERSHIP
     // ==========================================

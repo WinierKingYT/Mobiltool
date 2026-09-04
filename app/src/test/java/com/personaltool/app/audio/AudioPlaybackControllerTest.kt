@@ -230,6 +230,48 @@ class AudioPlaybackControllerTest {
     }
 
     @Test
+    fun completedReplay_whenRewindFails_doesNotStartAndRetainsCompletedPosition() {
+        val file = createTempAudioFile()
+        val controller = createController()
+
+        controller.openAudio("target-1", "Test Track", file.absolutePath)
+        fakeEngine.triggerPrepared(45000L)
+        controller.play()
+        fakeEngine.triggerCompletion()
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.COMPLETED)
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(45000L)
+
+        // Force seek failure on rewind
+        fakeEngine.shouldFailSeek = true
+
+        val started = controller.play()
+
+        assertThat(started).isFalse()
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.COMPLETED)
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(45000L)
+        assertThat(fakeEngine.isPlaying).isFalse()
+    }
+
+    @Test
+    fun completedReplay_whenRewindSucceeds_rewindsToZeroAndStartsPlaying() {
+        val file = createTempAudioFile()
+        val controller = createController()
+
+        controller.openAudio("target-1", "Test Track", file.absolutePath)
+        fakeEngine.triggerPrepared(45000L)
+        controller.play()
+        fakeEngine.triggerCompletion()
+
+        val started = controller.play()
+
+        assertThat(started).isTrue()
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.PLAYING)
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(0L)
+        assertThat(fakeEngine.isPlaying).isTrue()
+    }
+
+    @Test
     fun error_transitionsToError_withErrorMessage_andReleasesEngine() {
         val file = createTempAudioFile()
         val controller = createController()
