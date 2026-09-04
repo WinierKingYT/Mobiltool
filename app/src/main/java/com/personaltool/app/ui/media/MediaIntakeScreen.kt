@@ -241,6 +241,13 @@ fun MediaIntakeScreen(
                                             color = colors.danger
                                         )
                                     }
+                                    GalleryPublishStatus.UNSUPPORTED -> {
+                                        Text(
+                                            text = "GALLERY EXPORT NOT SUPPORTED (<API 29)",
+                                            style = typography.monoSmall,
+                                            color = colors.textMuted
+                                        )
+                                    }
                                     GalleryPublishStatus.PUBLISHING -> {
                                         Text(
                                             text = "EXPORTING TO GALLERY...",
@@ -333,6 +340,8 @@ fun MediaIntakeScreen(
                             "STORED IN VAULT // SAVED TO GALLERY"
                         state.downloadStatus == DownloadStatus.COMPLETED && state.galleryPublishStatus == GalleryPublishStatus.FAILED ->
                             "STORED IN VAULT // GALLERY EXPORT FAILED"
+                        state.downloadStatus == DownloadStatus.COMPLETED && state.galleryPublishStatus == GalleryPublishStatus.UNSUPPORTED ->
+                            "STORED IN VAULT // GALLERY NOT SUPPORTED (<API 29)"
                         state.downloadStatus == DownloadStatus.COMPLETED ->
                             "STORED IN VAULT"
                         else ->

@@ -30,17 +30,79 @@ class NewPipeYouTubeExtractor(
 ) : YouTubeExtractor {
 
     companion object {
+        fun extractVideoId(rawUrl: String): String? {
+            val trimmed = rawUrl.trim()
+            if (trimmed.isBlank()) return null
+
+            // 1. YouTube Shorts: /shorts/<ID>
+            if (trimmed.contains("/shorts/")) {
+                val candidate = trimmed.substringAfter("/shorts/")
+                    .substringBefore('?')
+                    .substringBefore('#')
+                    .substringBefore('/')
+                    .trim()
+                if (isValidVideoId(candidate)) return candidate
+            }
+
+            // 2. Short URL: youtu.be/<ID>
+            if (trimmed.contains("youtu.be/")) {
+                val candidate = trimmed.substringAfter("youtu.be/")
+                    .substringBefore('?')
+                    .substringBefore('#')
+                    .substringBefore('/')
+                    .trim()
+                if (isValidVideoId(candidate)) return candidate
+            }
+
+            // 3. Embedded Video: /embed/<ID>
+            if (trimmed.contains("/embed/")) {
+                val candidate = trimmed.substringAfter("/embed/")
+                    .substringBefore('?')
+                    .substringBefore('#')
+                    .substringBefore('/')
+                    .trim()
+                if (isValidVideoId(candidate)) return candidate
+            }
+
+            // 4. Legacy Video Path: /v/<ID>
+            if (trimmed.contains("/v/")) {
+                val candidate = trimmed.substringAfter("/v/")
+                    .substringBefore('?')
+                    .substringBefore('#')
+                    .substringBefore('/')
+                    .trim()
+                if (isValidVideoId(candidate)) return candidate
+            }
+
+            // 5. Query parameter: v=<ID> (in watch URLs or any URL with ?v= or &v=)
+            val queryIndex = trimmed.indexOf('?')
+            if (queryIndex >= 0 && queryIndex < trimmed.length - 1) {
+                val queryString = trimmed.substring(queryIndex + 1).substringBefore('#')
+                val params = queryString.split('&')
+                for (param in params) {
+                    if (param.startsWith("v=")) {
+                        val candidate = param.substringAfter("v=").trim()
+                        if (isValidVideoId(candidate)) return candidate
+                    }
+                }
+            }
+
+            return null
+        }
+
+        fun isValidVideoId(id: String): Boolean {
+            if (id.length != 11) return false
+            return id.all { c ->
+                (c in 'a'..'z') || (c in 'A'..'Z') || (c in '0'..'9') || c == '_' || c == '-'
+            }
+        }
+
         fun normalizeYouTubeUrl(rawUrl: String): String {
-            return when {
-                rawUrl.contains("/shorts/") -> {
-                    val id = rawUrl.substringAfter("/shorts/").substringBefore('?').substringBefore('/')
-                    "https://www.youtube.com/watch?v=$id"
-                }
-                rawUrl.contains("youtu.be/") -> {
-                    val id = rawUrl.substringAfter("youtu.be/").substringBefore('?').substringBefore('/')
-                    "https://www.youtube.com/watch?v=$id"
-                }
-                else -> rawUrl
+            val videoId = extractVideoId(rawUrl)
+            return if (videoId != null) {
+                "https://www.youtube.com/watch?v=$videoId"
+            } else {
+                rawUrl.trim()
             }
         }
     }

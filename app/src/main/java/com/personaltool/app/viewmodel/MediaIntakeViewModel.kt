@@ -3,6 +3,11 @@ package com.personaltool.app.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.personaltool.app.media.AndroidMediaStorePublisher
+import com.personaltool.app.media.MediaIntakeDownloader
+import com.personaltool.app.media.MediaStorePublishRequest
+import com.personaltool.app.media.MediaStorePublishResult
+import com.personaltool.app.media.MediaStorePublisher
 import com.personaltool.app.media.RealHttpMediaDownloader
 import com.personaltool.app.media.RealProbeResult
 import com.personaltool.core.common.result.AppResult
@@ -10,6 +15,8 @@ import com.personaltool.core.model.media.DownloadStatus
 import com.personaltool.core.model.media.MediaItem
 import com.personaltool.core.storage.dao.MediaDao
 import com.personaltool.core.storage.entity.MediaEntity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -18,12 +25,14 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 enum class GalleryPublishStatus {
     IDLE,
     PUBLISHING,
     SAVED,
-    FAILED
+    FAILED,
+    UNSUPPORTED
 }
 
 data class MediaIntakeUiState(
@@ -44,19 +53,24 @@ data class MediaIntakeUiState(
 class MediaIntakeViewModel(
     application: Application,
     private val mediaDao: MediaDao,
-    private val mediaStorePublisher: com.personaltool.app.media.MediaStorePublisher =
-        com.personaltool.app.media.AndroidMediaStorePublisher(application.applicationContext)
+    private val mediaStorePublisher: MediaStorePublisher =
+        AndroidMediaStorePublisher(application.applicationContext),
+    private val downloader: MediaIntakeDownloader =
+        RealHttpMediaDownloader(application.applicationContext),
+    coroutineScope: CoroutineScope? = null
 ) : AndroidViewModel(application) {
 
-    private val downloader = RealHttpMediaDownloader(application.applicationContext)
+    private val scope = coroutineScope ?: viewModelScope
 
     private val _uiState = MutableStateFlow(MediaIntakeUiState())
     val uiState: StateFlow<MediaIntakeUiState> = _uiState.asStateFlow()
 
+    private var activeDownloadJob: Job? = null
+
     val libraryItems: StateFlow<List<MediaItem>> = mediaDao.getAllMediaFlow()
         .map { entities -> entities.map { it.toDomain() } }
         .stateIn(
-            scope = viewModelScope,
+            scope = scope,
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
@@ -76,15 +90,16 @@ class MediaIntakeViewModel(
         val url = _uiState.value.inputUrl
         if (url.isBlank()) return
 
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    isProbing = true,
-                    errorMessage = null,
-                    galleryPublishStatus = GalleryPublishStatus.IDLE,
-                    galleryPublishMessage = null
-                )
-            }
+        _uiState.update {
+            it.copy(
+                isProbing = true,
+                errorMessage = null,
+                galleryPublishStatus = GalleryPublishStatus.IDLE,
+                galleryPublishMessage = null
+            )
+        }
+
+        scope.launch {
             when (val result = downloader.probeUrl(url)) {
                 is AppResult.Success -> {
                     val probe = result.data
@@ -104,7 +119,7 @@ class MediaIntakeViewModel(
                     _uiState.update {
                         it.copy(
                             isProbing = false,
-                            errorMessage = result.message
+                            errorMessage = formatUserFriendlyErrorMessage(result.message)
                         )
                     }
                 }
@@ -124,23 +139,27 @@ class MediaIntakeViewModel(
     }
 
     fun startDownload() {
+        if (activeDownloadJob?.isActive == true || _uiState.value.downloadStatus == DownloadStatus.DOWNLOADING) {
+            return
+        }
+
         val state = _uiState.value
         val probe = state.probeResult ?: return
         val formatId = state.selectedFormatId ?: return
         val formatOption = probe.availableFormats.find { it.formatId == formatId } ?: return
 
-        viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    downloadStatus = DownloadStatus.DOWNLOADING,
-                    downloadProgressPercent = 0,
-                    downloadedBytes = 0L,
-                    errorMessage = null,
-                    galleryPublishStatus = GalleryPublishStatus.IDLE,
-                    galleryPublishMessage = null
-                )
-            }
+        _uiState.update {
+            it.copy(
+                downloadStatus = DownloadStatus.DOWNLOADING,
+                downloadProgressPercent = 0,
+                downloadedBytes = 0L,
+                errorMessage = null,
+                galleryPublishStatus = GalleryPublishStatus.IDLE,
+                galleryPublishMessage = null
+            )
+        }
 
+        activeDownloadJob = scope.launch {
             when (val result = downloader.downloadUrl(probe, formatOption) { percent, bytes ->
                 _uiState.update {
                     it.copy(
@@ -153,14 +172,23 @@ class MediaIntakeViewModel(
                     val completed = result.data
                     mediaDao.insertMedia(MediaEntity.fromDomain(completed))
 
+                    // FIX 04: Intermediate PUBLISHING state
+                    _uiState.update {
+                        it.copy(
+                            downloadStatus = DownloadStatus.COMPLETED,
+                            downloadProgressPercent = 100,
+                            galleryPublishStatus = GalleryPublishStatus.PUBLISHING,
+                            galleryPublishMessage = null
+                        )
+                    }
+
                     // Auto-publish to MediaStore (shared Gallery storage)
-                    var publishResult: com.personaltool.app.media.MediaStorePublishResult =
-                        com.personaltool.app.media.MediaStorePublishResult.Skipped
+                    var publishResult: MediaStorePublishResult = MediaStorePublishResult.Skipped
 
                     val localPath = completed.localFilePath
                     if (completed.downloadStatus == DownloadStatus.COMPLETED && !localPath.isNullOrBlank()) {
-                        val localFile = java.io.File(localPath)
-                        val publishRequest = com.personaltool.app.media.MediaStorePublishRequest(
+                        val localFile = File(localPath)
+                        val publishRequest = MediaStorePublishRequest(
                             sourceFile = localFile,
                             title = completed.title,
                             mediaType = completed.mediaType,
@@ -175,16 +203,19 @@ class MediaIntakeViewModel(
                             downloadStatus = DownloadStatus.COMPLETED,
                             downloadProgressPercent = 100,
                             galleryPublishStatus = when (publishResult) {
-                                is com.personaltool.app.media.MediaStorePublishResult.Success -> GalleryPublishStatus.SAVED
-                                is com.personaltool.app.media.MediaStorePublishResult.Failed -> GalleryPublishStatus.FAILED
-                                com.personaltool.app.media.MediaStorePublishResult.Skipped -> GalleryPublishStatus.IDLE
+                                is MediaStorePublishResult.Success -> GalleryPublishStatus.SAVED
+                                is MediaStorePublishResult.Failed -> GalleryPublishStatus.FAILED
+                                is MediaStorePublishResult.Unsupported -> GalleryPublishStatus.UNSUPPORTED
+                                MediaStorePublishResult.Skipped -> GalleryPublishStatus.IDLE
                             },
                             galleryPublishMessage = when (publishResult) {
-                                is com.personaltool.app.media.MediaStorePublishResult.Success ->
+                                is MediaStorePublishResult.Success ->
                                     "${publishResult.relativePath}/${publishResult.displayName}"
-                                is com.personaltool.app.media.MediaStorePublishResult.Failed ->
+                                is MediaStorePublishResult.Failed ->
                                     publishResult.reason
-                                com.personaltool.app.media.MediaStorePublishResult.Skipped -> null
+                                is MediaStorePublishResult.Unsupported ->
+                                    publishResult.reason
+                                MediaStorePublishResult.Skipped -> null
                             },
                             inputUrl = ""
                         )
@@ -194,7 +225,7 @@ class MediaIntakeViewModel(
                     _uiState.update {
                         it.copy(
                             downloadStatus = DownloadStatus.FAILED,
-                            errorMessage = result.message,
+                            errorMessage = formatUserFriendlyErrorMessage(result.message),
                             galleryPublishStatus = GalleryPublishStatus.IDLE,
                             galleryPublishMessage = null
                         )
@@ -202,6 +233,20 @@ class MediaIntakeViewModel(
                 }
                 AppResult.Loading -> {}
             }
+        }
+    }
+
+    private fun formatUserFriendlyErrorMessage(rawMessage: String): String {
+        return when {
+            rawMessage.contains("YouTube", ignoreCase = true) ->
+                "YouTube bağlantısı çözümlenemedi. Bağlantıyı kontrol edin veya tekrar deneyin."
+            rawMessage.contains("Instagram", ignoreCase = true) ->
+                "Instagram platformundan medya indirme şu anda desteklenmiyor."
+            rawMessage.contains("Twitter", ignoreCase = true) || rawMessage.contains("X_TWITTER", ignoreCase = true) ->
+                "X (Twitter) platformundan medya indirme şu anda desteklenmiyor."
+            rawMessage.startsWith("PLATFORM_EXTRACTION_UNAVAILABLE") ->
+                "Medya akışı çözümlenemedi. Bağlantıyı kontrol edin veya tekrar deneyin."
+            else -> rawMessage
         }
     }
 
@@ -225,7 +270,7 @@ class MediaIntakeViewModel(
     }
 
     fun deleteMediaItem(id: String) {
-        viewModelScope.launch {
+        scope.launch {
             mediaDao.deleteMediaById(id)
         }
     }

@@ -849,4 +849,55 @@ class YouTubeExtractorTest {
             assertThat(e.message).contains("NewPipeRuntime already initialized with a different DownloaderBridge")
         }
     }
+
+    // ==========================================
+    // YouTube URL Normalization & Video ID Extraction Tests
+    // ==========================================
+
+    @Test
+    fun normalizeYouTubeUrl_canonicalizesComplexWatchUrlsWithTrackingAndPlaylistParams() {
+        val testCases = listOf(
+            "https://www.youtube.com/watch?v=UrLVxJWdGqY&list=RDUrLVxJWdGqY&index=1" to "https://www.youtube.com/watch?v=UrLVxJWdGqY",
+            "https://m.youtube.com/watch?v=UrLVxJWdGqY&feature=share" to "https://www.youtube.com/watch?v=UrLVxJWdGqY",
+            "https://youtu.be/UrLVxJWdGqY?si=abc123xyz" to "https://www.youtube.com/watch?v=UrLVxJWdGqY",
+            "https://www.youtube.com/shorts/UrLVxJWdGqY?feature=share" to "https://www.youtube.com/watch?v=UrLVxJWdGqY",
+            "https://www.youtube.com/embed/UrLVxJWdGqY?autoplay=1" to "https://www.youtube.com/watch?v=UrLVxJWdGqY",
+            "https://www.youtube.com/v/UrLVxJWdGqY" to "https://www.youtube.com/watch?v=UrLVxJWdGqY",
+            "https://www.youtube.com/watch?v=UrLVxJWdGqY&t=120s&si=tracking" to "https://www.youtube.com/watch?v=UrLVxJWdGqY",
+            "https://www.youtube.com/watch?feature=youtu.be&v=UrLVxJWdGqY&index=2" to "https://www.youtube.com/watch?v=UrLVxJWdGqY"
+        )
+
+        for ((input, expected) in testCases) {
+            val result = NewPipeYouTubeExtractor.normalizeYouTubeUrl(input)
+            assertThat(result).isEqualTo(expected)
+        }
+    }
+
+    @Test
+    fun normalizeYouTubeUrl_leavesNonVideoOrMalformedUrlsUnchanged() {
+        val nonVideoUrls = listOf(
+            "https://www.youtube.com/playlist?list=PL12345678901",
+            "https://www.youtube.com/channel/UC1234567890",
+            "https://example.com/video.mp4",
+            "not a url",
+            ""
+        )
+
+        for (url in nonVideoUrls) {
+            val result = NewPipeYouTubeExtractor.normalizeYouTubeUrl(url)
+            assertThat(result).isEqualTo(url.trim())
+        }
+    }
+
+    @Test
+    fun extractVideoId_validates11CharacterVideoIdsStrictly() {
+        assertThat(NewPipeYouTubeExtractor.extractVideoId("https://www.youtube.com/watch?v=UrLVxJWdGqY")).isEqualTo("UrLVxJWdGqY")
+        assertThat(NewPipeYouTubeExtractor.extractVideoId("https://youtu.be/1234567890_")).isEqualTo("1234567890_")
+        assertThat(NewPipeYouTubeExtractor.extractVideoId("https://www.youtube.com/shorts/a-b_c123456")).isEqualTo("a-b_c123456")
+
+        // Invalid lengths or characters
+        assertThat(NewPipeYouTubeExtractor.extractVideoId("https://www.youtube.com/watch?v=short")).isNull()
+        assertThat(NewPipeYouTubeExtractor.extractVideoId("https://www.youtube.com/watch?v=toolongvideoid123")).isNull()
+        assertThat(NewPipeYouTubeExtractor.extractVideoId("https://www.youtube.com/watch?v=invalid$#@!1")).isNull()
+    }
 }

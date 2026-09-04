@@ -25,11 +25,20 @@ data class RealProbeResult(
     val availableFormats: List<MediaFormatOption>
 )
 
-class RealHttpMediaDownloader(private val context: Context) {
+interface MediaIntakeDownloader {
+    suspend fun probeUrl(rawUrl: String): AppResult<RealProbeResult>
+    suspend fun downloadUrl(
+        probe: RealProbeResult,
+        selectedFormat: MediaFormatOption,
+        onProgress: (Int, Long) -> Unit
+    ): AppResult<MediaItem>
+}
+
+class RealHttpMediaDownloader(private val context: Context) : MediaIntakeDownloader {
 
     private val extractor = DefaultMediaExtractor()
 
-    suspend fun probeUrl(rawUrl: String): AppResult<RealProbeResult> = withContext(Dispatchers.IO) {
+    override suspend fun probeUrl(rawUrl: String): AppResult<RealProbeResult> = withContext(Dispatchers.IO) {
         when (val result = extractor.probeUrl(rawUrl)) {
             is AppResult.Success -> {
                 val probe: MediaProbeResult = result.data
@@ -52,7 +61,7 @@ class RealHttpMediaDownloader(private val context: Context) {
         }
     }
 
-    suspend fun downloadUrl(
+    override suspend fun downloadUrl(
         probe: RealProbeResult,
         selectedFormat: MediaFormatOption,
         onProgress: (Int, Long) -> Unit
