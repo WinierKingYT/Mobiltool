@@ -1,5 +1,8 @@
 package com.personaltool.app.video
 
+import com.personaltool.app.viewmodel.VaultFileAvailabilityInspector
+import com.personaltool.app.viewmodel.VaultFileState
+import com.personaltool.core.model.media.DownloadStatus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -12,6 +15,14 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
 
+data class VideoPlaybackSource(
+    val targetId: String,
+    val title: String,
+    val filePath: String?,
+    val expectedSizeBytes: Long = 0L,
+    val downloadStatus: DownloadStatus = DownloadStatus.COMPLETED
+)
+
 class VideoPlaybackController(
     private val engineFactory: () -> VideoPlaybackEngine,
     private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Main)
@@ -19,6 +30,7 @@ class VideoPlaybackController(
     private var engine: VideoPlaybackEngine? = null
     private var progressJob: Job? = null
     private var sessionGeneration: Long = 0L
+    private var pendingPlayOnRewind: Boolean = false
 
     val currentEngine: VideoPlaybackEngine?
         get() = engine
@@ -26,54 +38,75 @@ class VideoPlaybackController(
     private val _state = MutableStateFlow(VideoPlaybackState())
     val state: StateFlow<VideoPlaybackState> = _state.asStateFlow()
 
-    fun openVideo(targetId: String, title: String, filePath: String?) {
+    fun openVideo(
+        targetId: String,
+        title: String,
+        filePath: String?,
+        expectedSizeBytes: Long = 0L,
+        downloadStatus: DownloadStatus = DownloadStatus.COMPLETED
+    ) {
+        openVideo(
+            VideoPlaybackSource(
+                targetId = targetId,
+                title = title,
+                filePath = filePath,
+                expectedSizeBytes = expectedSizeBytes,
+                downloadStatus = downloadStatus
+            )
+        )
+    }
+
+    fun openVideo(source: VideoPlaybackSource) {
         // Idempotently release any active engine session and increment generation
         releaseCurrentEngine()
 
-        if (filePath.isNullOrBlank()) {
+        if (source.filePath.isNullOrBlank()) {
             sessionGeneration++
             _state.value = VideoPlaybackState(
                 phase = VideoPlaybackPhase.ERROR,
-                targetId = targetId,
-                title = title,
+                targetId = source.targetId,
+                title = source.title,
                 errorMessage = "Video file path is missing or blank"
             )
             return
         }
 
-        val file = File(filePath)
-        if (!file.exists()) {
+        if (source.downloadStatus != DownloadStatus.COMPLETED) {
             sessionGeneration++
             _state.value = VideoPlaybackState(
                 phase = VideoPlaybackPhase.ERROR,
-                targetId = targetId,
-                title = title,
-                filePath = filePath,
-                errorMessage = "Video file not found: $filePath"
+                targetId = source.targetId,
+                title = source.title,
+                filePath = source.filePath,
+                errorMessage = "Video is not ready for playback (status: ${source.downloadStatus})"
             )
             return
         }
 
-        if (!file.isFile || !file.canRead()) {
-            sessionGeneration++
-            _state.value = VideoPlaybackState(
-                phase = VideoPlaybackPhase.ERROR,
-                targetId = targetId,
-                title = title,
-                filePath = filePath,
-                errorMessage = "Video file is unreadable: $filePath"
-            )
-            return
-        }
+        val file = File(source.filePath)
+        val fileState = VaultFileAvailabilityInspector.inspectMediaFile(
+            file = file,
+            expectedSizeBytes = source.expectedSizeBytes,
+            downloadStatus = source.downloadStatus
+        )
 
-        if (file.name.endsWith(".part", ignoreCase = true) || file.name.endsWith(".tmp", ignoreCase = true)) {
+        if (fileState != VaultFileState.AVAILABLE) {
             sessionGeneration++
+            val errorMsg = when (fileState) {
+                VaultFileState.NOT_READY -> "Video is not ready for playback (status: ${source.downloadStatus})"
+                VaultFileState.MISSING -> "Video file not found: ${file.absolutePath}"
+                VaultFileState.UNREADABLE -> "Video file is unreadable: ${file.absolutePath}"
+                VaultFileState.SIZE_MISMATCH -> "Video file size mismatch (expected: ${source.expectedSizeBytes} bytes, actual: ${file.length()} bytes)"
+                VaultFileState.INVALID_MEDIA -> "Video file is corrupt, incomplete, or not a valid media container: ${file.name}"
+                VaultFileState.NO_LOCAL_FILE -> "Video local file path is absent"
+                else -> "Video file is not playable (state: ${fileState.name})"
+            }
             _state.value = VideoPlaybackState(
                 phase = VideoPlaybackPhase.ERROR,
-                targetId = targetId,
-                title = title,
-                filePath = filePath,
-                errorMessage = "Incomplete video download cannot be played: ${file.name}"
+                targetId = source.targetId,
+                title = source.title,
+                filePath = source.filePath,
+                errorMessage = errorMsg
             )
             return
         }
@@ -81,9 +114,9 @@ class VideoPlaybackController(
         val currentGen = ++sessionGeneration
         _state.value = VideoPlaybackState(
             phase = VideoPlaybackPhase.LOADING,
-            targetId = targetId,
-            title = title,
-            filePath = filePath
+            targetId = source.targetId,
+            title = source.title,
+            filePath = source.filePath
         )
 
         val newEngine = try {
@@ -91,9 +124,9 @@ class VideoPlaybackController(
         } catch (e: Exception) {
             _state.value = VideoPlaybackState(
                 phase = VideoPlaybackPhase.ERROR,
-                targetId = targetId,
-                title = title,
-                filePath = filePath,
+                targetId = source.targetId,
+                title = source.title,
+                filePath = source.filePath,
                 errorMessage = "Failed to instantiate video player: ${e.message}"
             )
             return
@@ -123,39 +156,82 @@ class VideoPlaybackController(
                 },
                 onError = { errorMsg ->
                     if (currentGen == sessionGeneration && engine === currentEngine) {
+                        pendingPlayOnRewind = false
+                        stopProgressPolling()
+                        currentEngine.release()
+                        if (engine === currentEngine) {
+                            engine = null
+                        }
                         _state.update { current ->
                             current.copy(
                                 phase = VideoPlaybackPhase.ERROR,
                                 errorMessage = errorMsg
                             )
                         }
-                        stopProgressPolling()
-                        currentEngine.release()
-                        if (engine === currentEngine) {
-                            engine = null
-                        }
                     }
                 },
                 onCompletion = {
                     if (currentGen == sessionGeneration && engine === currentEngine) {
+                        pendingPlayOnRewind = false
+                        stopProgressPolling()
                         _state.update { current ->
                             current.copy(
                                 phase = VideoPlaybackPhase.COMPLETED,
                                 currentPositionMs = current.durationMs
                             )
                         }
-                        stopProgressPolling()
+                    }
+                },
+                onActivityChanged = { activity ->
+                    if (currentGen == sessionGeneration && engine === currentEngine) {
+                        when (activity) {
+                            VideoPlaybackActivity.PLAYING -> {
+                                _state.update { it.copy(phase = VideoPlaybackPhase.PLAYING) }
+                                startProgressPolling(currentGen, currentEngine)
+                            }
+                            VideoPlaybackActivity.PAUSED -> {
+                                stopProgressPolling()
+                                if (_state.value.phase == VideoPlaybackPhase.PLAYING) {
+                                    val pos = currentEngine.getCurrentPosition()
+                                    _state.update { it.copy(phase = VideoPlaybackPhase.PAUSED, currentPositionMs = pos) }
+                                }
+                            }
+                            VideoPlaybackActivity.BUFFERING -> {
+                                stopProgressPolling()
+                                if (_state.value.phase == VideoPlaybackPhase.PLAYING) {
+                                    _state.update { it.copy(phase = VideoPlaybackPhase.LOADING) }
+                                }
+                            }
+                            VideoPlaybackActivity.ENDED -> {
+                                stopProgressPolling()
+                            }
+                        }
+                    }
+                },
+                onPositionDiscontinuity = { confirmedPositionMs ->
+                    if (currentGen == sessionGeneration && engine === currentEngine) {
+                        _state.update { current ->
+                            current.copy(
+                                currentPositionMs = confirmedPositionMs,
+                                phase = if (current.phase == VideoPlaybackPhase.COMPLETED) VideoPlaybackPhase.READY else current.phase
+                            )
+                        }
+                        if (pendingPlayOnRewind) {
+                            pendingPlayOnRewind = false
+                            currentEngine.requestPlay()
+                        }
                     }
                 }
             )
         } catch (e: Exception) {
             if (currentGen == sessionGeneration) {
+                pendingPlayOnRewind = false
                 releaseCurrentEngine()
                 _state.value = VideoPlaybackState(
                     phase = VideoPlaybackPhase.ERROR,
-                    targetId = targetId,
-                    title = title,
-                    filePath = filePath,
+                    targetId = source.targetId,
+                    title = source.title,
+                    filePath = source.filePath,
                     errorMessage = "Failed to prepare video: ${e.message}"
                 )
             }
@@ -166,25 +242,20 @@ class VideoPlaybackController(
         val current = _state.value
         if (!current.canPlay) return false
 
-        val currentGen = sessionGeneration
         val activeEngine = engine ?: return false
 
-        // If completed, seek back to 0 before restarting; fail closed if rewind fails
+        // If completed, request rewind to 0 before starting; wait for confirmed rewind before issuing play
         if (current.phase == VideoPlaybackPhase.COMPLETED) {
-            val rewound = activeEngine.seekTo(0L)
-            if (!rewound) {
+            pendingPlayOnRewind = true
+            val rewindRequested = activeEngine.requestSeek(0L)
+            if (!rewindRequested) {
+                pendingPlayOnRewind = false
                 return false
             }
-            _state.update { it.copy(currentPositionMs = 0L) }
-        }
-
-        val started = activeEngine.start()
-        if (started) {
-            _state.update { it.copy(phase = VideoPlaybackPhase.PLAYING) }
-            startProgressPolling(currentGen, activeEngine)
             return true
         }
-        return false
+
+        return activeEngine.requestPlay()
     }
 
     fun pause() {
@@ -192,12 +263,7 @@ class VideoPlaybackController(
         if (current.phase != VideoPlaybackPhase.PLAYING) return
 
         val activeEngine = engine ?: return
-        val paused = activeEngine.pause()
-        if (paused) {
-            stopProgressPolling()
-            val pos = activeEngine.getCurrentPosition()
-            _state.update { it.copy(phase = VideoPlaybackPhase.PAUSED, currentPositionMs = pos) }
-        }
+        activeEngine.requestPause()
     }
 
     fun togglePlayPause() {
@@ -214,12 +280,7 @@ class VideoPlaybackController(
 
         val clamped = positionMs.coerceIn(0L, current.durationMs.coerceAtLeast(0L))
         val activeEngine = engine ?: return false
-        val sought = activeEngine.seekTo(clamped)
-        if (sought) {
-            _state.update { it.copy(currentPositionMs = clamped) }
-            return true
-        }
-        return false
+        return activeEngine.requestSeek(clamped)
     }
 
     fun seekBy(offsetMs: Long): Boolean {
@@ -237,6 +298,7 @@ class VideoPlaybackController(
     }
 
     fun release() {
+        pendingPlayOnRewind = false
         sessionGeneration++
         releaseCurrentEngine()
         _state.value = VideoPlaybackState(phase = VideoPlaybackPhase.IDLE)
@@ -244,6 +306,7 @@ class VideoPlaybackController(
 
     private fun releaseCurrentEngine() {
         sessionGeneration++
+        pendingPlayOnRewind = false
         stopProgressPolling()
         engine?.release()
         engine = null

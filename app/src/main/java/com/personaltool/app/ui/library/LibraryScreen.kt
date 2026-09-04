@@ -46,7 +46,7 @@ import java.util.Locale
 fun LibraryScreen(
     viewModel: LibraryViewModel,
     onPlayAudio: (targetId: String, title: String, audioPath: String?, durationMs: Long) -> Unit = { _, _, _, _ -> },
-    onPlayVideo: (targetId: String, title: String, filePath: String?) -> Unit = { _, _, _ -> },
+    onPlayVideo: (source: com.personaltool.app.video.VideoPlaybackSource) -> Unit = { _ -> },
     onOpenTranscript: (targetId: String, title: String, audioPath: String?, durationMs: Long) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -181,7 +181,7 @@ fun LibraryScreen(
                                             onPlayAudio(call.id, item.title, call.audioFilePath, call.durationMs)
                                         }
                                         VaultPrimaryAction.PLAY_VIDEO -> {
-                                            onPlayVideo(call.id, item.title, call.audioFilePath)
+                                            // Calls are audio only
                                         }
                                         VaultPrimaryAction.OPEN_TRANSCRIPT -> {
                                             onOpenTranscript(call.id, item.title, call.audioFilePath, call.durationMs)
@@ -237,7 +237,15 @@ fun LibraryScreen(
                                             onPlayAudio(media.id, item.title, media.localFilePath, media.durationMs)
                                         }
                                         VaultPrimaryAction.PLAY_VIDEO -> {
-                                            onPlayVideo(media.id, item.title, media.localFilePath)
+                                            onPlayVideo(
+                                                com.personaltool.app.video.VideoPlaybackSource(
+                                                    targetId = media.id,
+                                                    title = item.title,
+                                                    filePath = media.localFilePath,
+                                                    expectedSizeBytes = media.fileSizeBytes,
+                                                    downloadStatus = media.downloadStatus
+                                                )
+                                            )
                                         }
                                         VaultPrimaryAction.OPEN_TRANSCRIPT -> {
                                             onOpenTranscript(media.id, item.title, media.localFilePath, media.durationMs)

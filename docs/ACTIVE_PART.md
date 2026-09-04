@@ -2,7 +2,7 @@
 
 ```text
 ACTIVE_PART = P3
-STATUS = LOCKED / PASS
+STATUS = IN_PROGRESS
 ```
 
 ## Part Sequencing & Lifecycle State:
@@ -17,11 +17,11 @@ STATUS = LOCKED / PASS
   - YouTube (ADR_002 APPROVED): SUPPORTED / QUALIFIED FOR PUBLIC CONTENT (`NewPipeExtractor:v0.26.5` behind strict `YouTubeExtractor` adapter + Mobiltool verified atomic downloader)
   - Instagram & X (Twitter): EXTRACTION_UNAVAILABLE / NOT APPROVED (Fails closed with `ErrorCode.EXTRACTION_FAILED`)
   - Verification: 100% deterministic offline suite (`.\gradlew.bat test`), live qualification tasks (`realDirectMediaTest`, `realYouTubeExtractionTest`)
-- **P3: Library & Playback** - LOCKED / PASS
+- **P3: Library & Playback** - ACTIVE / IN_PROGRESS (Software Remediation Complete, Physical Device Gate Pending)
   - Unified Vault: Reactive Room DB combine (`CallEntity` + `MediaEntity`), fast bounded-prefix file inspection (<= 768 bytes, zero SHA-256 in UI thread), two-stage pipeline (zero disk I/O on query/filtering).
   - Audio Playback: Full lifecycle coroutine controller (`AudioPlaybackController`), `sessionGeneration`, fail-closed seek, audio focus interruption handling, speed control (0.5x..2.0x), transcript position synchronization, industrial UI playback sheet.
-  - Video Playback: Media3 ExoPlayer 1.5.1 engine (`AndroidMedia3VideoEngine`), `VideoPlaybackController`, action-time file validation (rejection of `.part`/`.tmp`), fullscreen HUD viewer (`VideoPlaybackViewer`), presentation mutual exclusion.
-  - Verification: 267/267 unit tests passing across 22 suites, clean `assembleDebug`.
+  - Video Playback: Media3 ExoPlayer 1.5.1 engine (`AndroidMedia3VideoEngine`), `VideoPlaybackController` with authoritative `VideoPlaybackActivity` state engine, asynchronous seek discontinuity confirmation, action-time preflight validation (`VideoPlaybackSource` checking container signatures, size match, `NOT_READY` precedence), setup leak protection, and fullscreen HUD viewer (`VideoPlaybackViewer`).
+  - Verification: 273/273 unit tests passing across 22 suites, clean `assembleDebug`.
 - **P4: Local Transcription** - LOCKED / AWAITING USER ACTIVATION
 - **P5+: Core Foundation, Dev Bridge, Remote Desktop** - LOCKED
 
@@ -30,7 +30,9 @@ STATUS = LOCKED / PASS
 ## P3 Retained Invariants:
 * `PLAY_AUDIO != OPEN_TRANSCRIPT`
 * `PLAY_VIDEO != OPEN_TRANSCRIPT`
-* `EXISTS != PLAYABLE` (File must be validated before opening player)
+* `PLAY REQUESTED != PLAYER IS PLAYING` (Authoritative playing events drive controller phase and progress polling)
+* `SEEK REQUESTED != SEEK CONFIRMED` (Media3 position discontinuity confirms seek)
+* `EXISTS != PLAYABLE` (Action-time preflight validates container signature and size before opening player)
 * `STAGING / TEMP FILES (.part, .tmp) MUST NEVER BE OPENED IN PLAYERS`
 * `ENGINE SEEK FAILURE -> CONTROLLER MUST NOT CLAIM SEEK SUCCESS`
 * `VIDEO PLAYBACK != VLC / FFMPEG PLAYER` (Strict Media3 ExoPlayer integration)
@@ -42,9 +44,10 @@ STATUS = LOCKED / PASS
 ## P3 Evidence Record:
 * **Evidence Document**: [docs/P3_PLAYBACK_EVIDENCE.md](file:///c:/Users/ahmet/Desktop/aramakay%C4%B1t/docs/P3_PLAYBACK_EVIDENCE.md)
 * **Build**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat clean assembleDebug`)
-* **Full Unit Tests**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat test` - 267 unit tests passing)
-* **Attached Hardware Target**: Samsung Galaxy S22 (`SM-S901E`, Android 16 / SDK 36) attached via wireless ADB
+* **Full Unit Tests**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat test` - 273 unit tests passing)
+* **Physical Device Target**: Samsung Galaxy S22 (`SM-S901E`, Android 16 / SDK 36)
 * **Audio Interruption Tests**: PASS
 * **Android Audio Focus Engine Integration**: CODE_REVIEWED_NOT_RUNTIME_TESTED
-* **Media3 ExoPlayer Integration**: PASS
+* **Media3 ExoPlayer Integration**: PASS (Code reviewed & unit tested with 29 controller tests)
+* **Physical Playback Qualification**: AWAITING_PHYSICAL_QUALIFICATION_AT_USER_ACCEPTANCE
 * **GitHub CI**: NOT CONFIGURED / NO REMOTE STATUS CHECK EVIDENCE

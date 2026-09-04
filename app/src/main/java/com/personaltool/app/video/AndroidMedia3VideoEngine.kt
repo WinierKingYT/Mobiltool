@@ -28,7 +28,9 @@ class AndroidMedia3VideoEngine(
         filePath: String,
         onPrepared: (durationMs: Long, width: Int, height: Int) -> Unit,
         onError: (errorMessage: String) -> Unit,
-        onCompletion: () -> Unit
+        onCompletion: () -> Unit,
+        onActivityChanged: (activity: VideoPlaybackActivity) -> Unit,
+        onPositionDiscontinuity: (confirmedPositionMs: Long) -> Unit
     ) {
         release()
 
@@ -38,6 +40,7 @@ class AndroidMedia3VideoEngine(
             return
         }
 
+        var localPlayer: ExoPlayer? = null
         try {
             val audioAttributes = AudioAttributes.Builder()
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
@@ -47,6 +50,8 @@ class AndroidMedia3VideoEngine(
             val player = ExoPlayer.Builder(context)
                 .setAudioAttributes(audioAttributes, true)
                 .build()
+            localPlayer = player
+            exoPlayer = player
 
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -58,12 +63,40 @@ class AndroidMedia3VideoEngine(
                                 durationMs = dur
                                 onPrepared(dur, videoWidth, videoHeight)
                             }
+                            if (!player.isPlaying) {
+                                onActivityChanged(VideoPlaybackActivity.PAUSED)
+                            }
+                        }
+                        Player.STATE_BUFFERING -> {
+                            onActivityChanged(VideoPlaybackActivity.BUFFERING)
                         }
                         Player.STATE_ENDED -> {
+                            onActivityChanged(VideoPlaybackActivity.ENDED)
                             onCompletion()
                         }
-                        Player.STATE_IDLE, Player.STATE_BUFFERING -> {}
+                        Player.STATE_IDLE -> {}
                     }
+                }
+
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    if (isPlaying) {
+                        onActivityChanged(VideoPlaybackActivity.PLAYING)
+                    } else {
+                        when (player.playbackState) {
+                            Player.STATE_BUFFERING -> onActivityChanged(VideoPlaybackActivity.BUFFERING)
+                            Player.STATE_ENDED -> onActivityChanged(VideoPlaybackActivity.ENDED)
+                            else -> onActivityChanged(VideoPlaybackActivity.PAUSED)
+                        }
+                    }
+                }
+
+                override fun onPositionDiscontinuity(
+                    oldPosition: Player.PositionInfo,
+                    newPosition: Player.PositionInfo,
+                    reason: Int
+                ) {
+                    val confirmedMs = newPosition.positionMs.coerceAtLeast(0L)
+                    onPositionDiscontinuity(confirmedMs)
                 }
 
                 override fun onVideoSizeChanged(videoSize: VideoSize) {
@@ -84,15 +117,22 @@ class AndroidMedia3VideoEngine(
             val mediaItem = MediaItem.fromUri(Uri.fromFile(file))
             player.setMediaItem(mediaItem)
             player.prepare()
-
-            exoPlayer = player
         } catch (e: Exception) {
+            try {
+                localPlayer?.apply {
+                    playWhenReady = false
+                    stop()
+                    clearMediaItems()
+                    release()
+                }
+            } catch (_: Exception) {
+            }
             release()
             onError("Failed to setup video player: ${e.message}")
         }
     }
 
-    override fun start(): Boolean {
+    override fun requestPlay(): Boolean {
         val player = exoPlayer ?: return false
         return try {
             player.playWhenReady = true
@@ -103,7 +143,7 @@ class AndroidMedia3VideoEngine(
         }
     }
 
-    override fun pause(): Boolean {
+    override fun requestPause(): Boolean {
         val player = exoPlayer ?: return false
         return try {
             player.pause()
@@ -114,7 +154,7 @@ class AndroidMedia3VideoEngine(
         }
     }
 
-    override fun seekTo(positionMs: Long): Boolean {
+    override fun requestSeek(positionMs: Long): Boolean {
         val player = exoPlayer ?: return false
         val target = positionMs.coerceIn(0L, durationMs.coerceAtLeast(0L))
         return try {

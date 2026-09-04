@@ -119,9 +119,9 @@ fun MainScreen(
                             app.videoPlaybackController.release()
                             app.audioPlaybackController.openAudio(targetId, title, audioPath)
                         },
-                        onPlayVideo = { targetId, title, filePath ->
+                        onPlayVideo = { source ->
                             app.audioPlaybackController.release()
-                            app.videoPlaybackController.openVideo(targetId, title, filePath)
+                            app.videoPlaybackController.openVideo(source)
                         },
                         onOpenTranscript = { targetId, title, audioPath, durationMs ->
                             app.videoPlaybackController.release()

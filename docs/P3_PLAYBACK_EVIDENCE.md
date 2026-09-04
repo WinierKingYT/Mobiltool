@@ -4,7 +4,7 @@
 
 ```text
 ACTIVE_PART = P3
-STATUS = LOCKED / PASS
+STATUS = IN_PROGRESS (Software Remediation Complete, Physical Qualification Pending)
 PREVIOUS PARTS = P0 (LOCKED/PASS), P1 (LOCKED/TRUTH-LOCKED), P2 (LOCKED/PASS)
 FUTURE PARTS = P4+ (LOCKED)
 ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
@@ -16,7 +16,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 
 * **Command**: `.\gradlew.bat test` / `.\gradlew.bat testDebugUnitTest`
 * **Result**: `BUILD SUCCESSFUL` (0 failures, 0 errors, 0 skipped)
-* **Total Repository Unit Tests**: 267 tests
+* **Total Repository Unit Tests**: 273 tests
 
 ### Breakdown by Module & Suite:
 
@@ -24,7 +24,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 |---|---|---|---|
 | `:app` | `AudioPlaybackControllerTest` | 25 | PASS |
 | `:app` | `RealAudioPlayerTest` | 3 | PASS |
-| `:app` | `VideoPlaybackControllerTest` | 23 | PASS |
+| `:app` | `VideoPlaybackControllerTest` | 29 | PASS |
 | `:app` | `VaultItemEvaluatorTest` | 21 | PASS |
 | `:app` | `LibraryViewModelTest` | 15 | PASS |
 | `:app` | `TranscriptViewModelTest` | 13 | PASS |
@@ -44,7 +44,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 | `:desktop-bridge` | `PtyTerminalNormalizerTest`, `VirtualScreenCoordinateTransformerTest` | 4 | PASS |
 | `:media-extractor-api` | `HttpMediaProberTest`, `MediaFileValidatorTest`, `NetworkSecurityPolicyTest`, `RealHttpStreamDownloaderTest`, `SafeHttpTransportTest`, `UrlClassifierTest`, `YouTubeExtractorTest` | 89 | PASS |
 | `:transcription-api` | `DefaultTranscriptionEngineTest`, `TranscriptExporterTest` | 7 | PASS |
-| **Total** | **22 Suites** | **267** | **PASS** |
+| **Total** | **22 Suites** | **273** | **PASS** |
 
 ---
 
@@ -62,16 +62,19 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 
 ---
 
-## 3. Video Playback Subsystem Architecture & Evidence
+## 3. Video Playback Subsystem Architecture & Evidence (Remediation Hardened)
 
 * **Core Components**:
-  - `AndroidMedia3VideoEngine`: Media3 ExoPlayer (v1.5.1) engine implementing `VideoPlaybackEngine` with `C.AUDIO_CONTENT_TYPE_MOVIE`, `Player.Listener`, `STATE_READY`, `STATE_ENDED`, `onVideoSizeChanged`, and fail-safe resource release.
-  - `VideoPlaybackController`: Action-time file validation (rejection of blank/missing/unreadable/`.part`/`.tmp`), `sessionGeneration` stale callback dropping, fail-closed replay seek, and progress tracking.
+  - `AndroidMedia3VideoEngine`: Media3 ExoPlayer (v1.5.1) engine implementing `VideoPlaybackEngine` with `C.AUDIO_CONTENT_TYPE_MOVIE`, `Player.Listener`, `onIsPlayingChanged`, `onPositionDiscontinuity`, `onPlaybackStateChanged`, and setup exception leak release protection.
+  - `VideoPlaybackController`: Action-time file validation (`VideoPlaybackSource` checking container signatures, size match, `NOT_READY` precedence), `sessionGeneration` stale callback dropping, authoritative playing activity handling, asynchronous seek confirmation, replay rewind confirmation, and progress tracking.
   - `VideoPlaybackViewer`: Fullscreen Compose HUD overlay surface with `AndroidView(factory = { PlayerView(...) })`, video aspect ratio preservation, retro-industrial controls (play/pause, seek slider, speed selector, timecode displays, system telemetry).
   - `MainScreen`: Presentation mutual exclusion (video viewer releases audio player; audio player / transcript viewer releases video player).
 * **Evidence Labels**:
-  - `MEDIA3 EXOPLAYER INTEGRATION`: **PASS** (ExoPlayer 1.5.1 configured per ADR and project standards; no VLC/ffmpeg foreign player)
-  - `ACTION-TIME FILE REVALIDATION`: **PASS** (Rejects `.part`, `.tmp`, unreadable, or missing files before opening player)
+  - `MEDIA3 AUTHORITATIVE PLAYING`: **PASS** (Controller `PLAYING` phase and progress polling are driven strictly by engine `onActivityChanged(PLAYING)`)
+  - `MEDIA3 ASYNCHRONOUS SEEK CONFIRMATION`: **PASS** (`currentPositionMs` updates only upon engine `onPositionDiscontinuity`)
+  - `COMPLETED REPLAY REWIND`: **PASS** (Replay requests rewind to 0 and waits for confirmed rewind before starting playback)
+  - `ACTION-TIME PREFLIGHT VALIDATION`: **PASS** (Rejects random-byte `.mp4`, size mismatch, `NOT_READY`, `.part`, `.tmp`, or missing files)
+  - `EXOPLAYER SETUP LEAK PROTECTION`: **PASS** (Guarantees player release on setup exception)
   - `VIDEO ACTION ROUTING`: **PASS** (`VaultPrimaryAction.PLAY_VIDEO` bound strictly to `MediaType.VIDEO` + `VaultFileState.AVAILABLE`)
 
 ---
@@ -93,14 +96,14 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 
 ## 5. Physical Device Gate Status
 
-* **ADB Probe**:
-  - `adb devices`: Samsung Galaxy S22 (`SM-S901E`, Android 16 / SDK 36) attached via wireless ADB.
+* **Target Hardware**:
+  - Samsung Galaxy S22 (`SM-S901E`, Android 16 / SDK 36)
 * **Build Verification**:
-  - `.\gradlew.bat assembleDebug`: **PASS**
+  - `.\gradlew.bat clean assembleDebug`: **PASS**
 * **Physical Device Runtime Status**:
-  - `PHYSICAL DEVICE CONNECTIVITY`: **ATTACHED** (`SM-S901E`)
+  - `PHYSICAL DEVICE CONNECTIVITY`: **DISCONNECTED / AWAITING_CONNECTION**
   - `BUILD COMPILATION & PACKAGING`: **PASS** (`assembleDebug` succeeded)
-  - `PHYSICAL PLAYBACK QUALIFICATION`: **READY_FOR_USER_QUALIFICATION**
+  - `PHYSICAL PLAYBACK QUALIFICATION`: **AWAITING_PHYSICAL_QUALIFICATION_AT_USER_ACCEPTANCE**
 
 ---
 
@@ -109,7 +112,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 * `P0 = LOCKED / PASS`
 * `P1 = LOCKED / TRUTH-LOCKED`
 * `P2 = LOCKED / PASS`
-* `P3 = LOCKED / PASS`
+* `P3 = ACTIVE / IN_PROGRESS`
 * `P4 = LOCKED` (Speech-to-Text / Whisper untouched)
 * `P5+ = LOCKED`
 * `ROOM DB SCHEMA = 1` (Zero entity/DAO/table modifications)
