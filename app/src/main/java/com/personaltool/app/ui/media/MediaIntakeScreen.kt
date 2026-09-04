@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.dp
+import com.personaltool.app.viewmodel.GalleryPublishStatus
 import com.personaltool.app.viewmodel.MediaIntakeViewModel
 import com.personaltool.core.designsystem.components.BadgeSeverity
 import com.personaltool.core.designsystem.components.CopperDivider
@@ -197,17 +198,60 @@ fun MediaIntakeScreen(
                 subtitle = "Format MIME: ${result.contentType}",
                 isActive = true,
                 bottomMetadata = {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        DownloadStatusBadge(status = state.downloadStatus)
-                        Text(
-                            text = if (state.downloadProgressPercent > 0) "${state.downloadProgressPercent}%" else "READY TO STREAM",
-                            style = typography.monoSmall,
-                            color = if (state.downloadStatus == DownloadStatus.COMPLETED) colors.success else colors.textSecondary
-                        )
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            DownloadStatusBadge(status = state.downloadStatus)
+                            Text(
+                                text = if (state.downloadProgressPercent > 0) "${state.downloadProgressPercent}%" else "READY TO STREAM",
+                                style = typography.monoSmall,
+                                color = if (state.downloadStatus == DownloadStatus.COMPLETED) colors.success else colors.textSecondary
+                            )
+                        }
+
+                        if (state.downloadStatus == DownloadStatus.COMPLETED) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                when (state.galleryPublishStatus) {
+                                    GalleryPublishStatus.SAVED -> {
+                                        Text(
+                                            text = "SHARED STORAGE // SAVED TO GALLERY",
+                                            style = typography.monoSmall,
+                                            color = colors.success
+                                        )
+                                        state.galleryPublishMessage?.let { msg ->
+                                            Text(
+                                                text = msg.substringAfterLast("/"),
+                                                style = typography.monoSmall,
+                                                color = colors.textMuted
+                                            )
+                                        }
+                                    }
+                                    GalleryPublishStatus.FAILED -> {
+                                        Text(
+                                            text = "GALLERY EXPORT FAILED",
+                                            style = typography.monoSmall,
+                                            color = colors.danger
+                                        )
+                                    }
+                                    GalleryPublishStatus.PUBLISHING -> {
+                                        Text(
+                                            text = "EXPORTING TO GALLERY...",
+                                            style = typography.monoSmall,
+                                            color = colors.accent
+                                        )
+                                    }
+                                    GalleryPublishStatus.IDLE -> {}
+                                }
+                            }
+                        }
                     }
                 }
             )
@@ -284,7 +328,16 @@ fun MediaIntakeScreen(
                     modifier = Modifier.padding(end = 6.dp)
                 )
                 Text(
-                    text = if (state.downloadStatus == DownloadStatus.COMPLETED) "STORED IN VAULT" else "START STREAM DOWNLOAD",
+                    text = when {
+                        state.downloadStatus == DownloadStatus.COMPLETED && state.galleryPublishStatus == GalleryPublishStatus.SAVED ->
+                            "STORED IN VAULT // SAVED TO GALLERY"
+                        state.downloadStatus == DownloadStatus.COMPLETED && state.galleryPublishStatus == GalleryPublishStatus.FAILED ->
+                            "STORED IN VAULT // GALLERY EXPORT FAILED"
+                        state.downloadStatus == DownloadStatus.COMPLETED ->
+                            "STORED IN VAULT"
+                        else ->
+                            "START STREAM DOWNLOAD"
+                    },
                     style = typography.monoSmall,
                     color = colors.textPrimary
                 )

@@ -19,6 +19,13 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
+enum class GalleryPublishStatus {
+    IDLE,
+    PUBLISHING,
+    SAVED,
+    FAILED
+}
+
 data class MediaIntakeUiState(
     val inputUrl: String = "",
     val isProbing: Boolean = false,
@@ -29,12 +36,16 @@ data class MediaIntakeUiState(
     val downloadedBytes: Long = 0L,
     val errorMessage: String? = null,
     val activePlayingVideoPath: String? = null,
-    val activePlayingVideoTitle: String? = null
+    val activePlayingVideoTitle: String? = null,
+    val galleryPublishStatus: GalleryPublishStatus = GalleryPublishStatus.IDLE,
+    val galleryPublishMessage: String? = null
 )
 
 class MediaIntakeViewModel(
     application: Application,
-    private val mediaDao: MediaDao
+    private val mediaDao: MediaDao,
+    private val mediaStorePublisher: com.personaltool.app.media.MediaStorePublisher =
+        com.personaltool.app.media.AndroidMediaStorePublisher(application.applicationContext)
 ) : AndroidViewModel(application) {
 
     private val downloader = RealHttpMediaDownloader(application.applicationContext)
@@ -54,7 +65,9 @@ class MediaIntakeViewModel(
         _uiState.update {
             it.copy(
                 inputUrl = url,
-                errorMessage = null
+                errorMessage = null,
+                galleryPublishStatus = GalleryPublishStatus.IDLE,
+                galleryPublishMessage = null
             )
         }
     }
@@ -64,7 +77,14 @@ class MediaIntakeViewModel(
         if (url.isBlank()) return
 
         viewModelScope.launch {
-            _uiState.update { it.copy(isProbing = true, errorMessage = null) }
+            _uiState.update {
+                it.copy(
+                    isProbing = true,
+                    errorMessage = null,
+                    galleryPublishStatus = GalleryPublishStatus.IDLE,
+                    galleryPublishMessage = null
+                )
+            }
             when (val result = downloader.probeUrl(url)) {
                 is AppResult.Success -> {
                     val probe = result.data
@@ -94,7 +114,13 @@ class MediaIntakeViewModel(
     }
 
     fun selectFormat(formatId: String) {
-        _uiState.update { it.copy(selectedFormatId = formatId) }
+        _uiState.update {
+            it.copy(
+                selectedFormatId = formatId,
+                galleryPublishStatus = GalleryPublishStatus.IDLE,
+                galleryPublishMessage = null
+            )
+        }
     }
 
     fun startDownload() {
@@ -109,7 +135,9 @@ class MediaIntakeViewModel(
                     downloadStatus = DownloadStatus.DOWNLOADING,
                     downloadProgressPercent = 0,
                     downloadedBytes = 0L,
-                    errorMessage = null
+                    errorMessage = null,
+                    galleryPublishStatus = GalleryPublishStatus.IDLE,
+                    galleryPublishMessage = null
                 )
             }
 
@@ -125,10 +153,39 @@ class MediaIntakeViewModel(
                     val completed = result.data
                     mediaDao.insertMedia(MediaEntity.fromDomain(completed))
 
+                    // Auto-publish to MediaStore (shared Gallery storage)
+                    var publishResult: com.personaltool.app.media.MediaStorePublishResult =
+                        com.personaltool.app.media.MediaStorePublishResult.Skipped
+
+                    val localPath = completed.localFilePath
+                    if (completed.downloadStatus == DownloadStatus.COMPLETED && !localPath.isNullOrBlank()) {
+                        val localFile = java.io.File(localPath)
+                        val publishRequest = com.personaltool.app.media.MediaStorePublishRequest(
+                            sourceFile = localFile,
+                            title = completed.title,
+                            mediaType = completed.mediaType,
+                            mimeType = formatOption.note,
+                            extension = formatOption.ext ?: localFile.extension
+                        )
+                        publishResult = mediaStorePublisher.publishMedia(publishRequest)
+                    }
+
                     _uiState.update {
                         it.copy(
                             downloadStatus = DownloadStatus.COMPLETED,
                             downloadProgressPercent = 100,
+                            galleryPublishStatus = when (publishResult) {
+                                is com.personaltool.app.media.MediaStorePublishResult.Success -> GalleryPublishStatus.SAVED
+                                is com.personaltool.app.media.MediaStorePublishResult.Failed -> GalleryPublishStatus.FAILED
+                                com.personaltool.app.media.MediaStorePublishResult.Skipped -> GalleryPublishStatus.IDLE
+                            },
+                            galleryPublishMessage = when (publishResult) {
+                                is com.personaltool.app.media.MediaStorePublishResult.Success ->
+                                    "${publishResult.relativePath}/${publishResult.displayName}"
+                                is com.personaltool.app.media.MediaStorePublishResult.Failed ->
+                                    publishResult.reason
+                                com.personaltool.app.media.MediaStorePublishResult.Skipped -> null
+                            },
                             inputUrl = ""
                         )
                     }
@@ -137,7 +194,9 @@ class MediaIntakeViewModel(
                     _uiState.update {
                         it.copy(
                             downloadStatus = DownloadStatus.FAILED,
-                            errorMessage = result.message
+                            errorMessage = result.message,
+                            galleryPublishStatus = GalleryPublishStatus.IDLE,
+                            galleryPublishMessage = null
                         )
                     }
                 }
