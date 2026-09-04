@@ -69,6 +69,7 @@ fun MainScreen(
     val remoteDesktopViewModel: RemoteDesktopViewModel = viewModel(factory = factory)
 
     val desktopState by remoteDesktopViewModel.uiState.collectAsState()
+    val transcriptState by transcriptViewModel.uiState.collectAsState()
 
     var currentTab by remember {
         mutableStateOf(if (sharedUrl != null) MainNavigationTab.MEDIA else MainNavigationTab.CALLS)
@@ -174,11 +175,13 @@ fun MainScreen(
             }
         }
 
-        // Foreground Audio Playback Sheet
-        AudioPlaybackSheet(
-            controller = app.audioPlaybackController,
-            onDismiss = { app.audioPlaybackController.release() }
-        )
+        // Foreground Audio Playback Sheet (suppressed when transcript viewer sheet owns presentation)
+        if (!transcriptState.isOpen) {
+            AudioPlaybackSheet(
+                controller = app.audioPlaybackController,
+                onDismiss = { app.audioPlaybackController.release() }
+            )
+        }
 
         // Modal Transcript Viewer Sheet
         TranscriptViewerSheet(viewModel = transcriptViewModel)

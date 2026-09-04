@@ -19,6 +19,7 @@ class AndroidMediaPlayerEngine(
     private var hasAudioFocus = false
 
     private var durationMs: Long = 0L
+    private var onInterruptionCallback: ((AudioInterruptionReason) -> Unit)? = null
 
     init {
         audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
@@ -28,9 +29,11 @@ class AndroidMediaPlayerEngine(
         filePath: String,
         onPrepared: (durationMs: Long) -> Unit,
         onError: (errorMessage: String) -> Unit,
-        onCompletion: () -> Unit
+        onCompletion: () -> Unit,
+        onInterruption: (reason: AudioInterruptionReason) -> Unit
     ) {
         release()
+        onInterruptionCallback = onInterruption
 
         val file = File(filePath)
         if (!file.exists() || !file.isFile || !file.canRead()) {
@@ -157,6 +160,7 @@ class AndroidMediaPlayerEngine(
 
     override fun release() {
         abandonAudioFocus()
+        onInterruptionCallback = null
         try {
             mediaPlayer?.apply {
                 try {
@@ -187,15 +191,26 @@ class AndroidMediaPlayerEngine(
                         .build()
                 )
                 .setOnAudioFocusChangeListener { focusChange ->
-                    if (focusChange == AudioManager.AUDIOFOCUS_LOSS ||
-                        focusChange == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT
-                    ) {
-                        try {
-                            if (mediaPlayer?.isPlaying == true) {
-                                mediaPlayer?.pause()
-                            }
-                        } catch (_: Exception) {}
-                        hasAudioFocus = false
+                    when (focusChange) {
+                        AudioManager.AUDIOFOCUS_LOSS -> {
+                            hasAudioFocus = false
+                            try {
+                                if (mediaPlayer?.isPlaying == true) {
+                                    mediaPlayer?.pause()
+                                }
+                            } catch (_: Exception) {}
+                            onInterruptionCallback?.invoke(AudioInterruptionReason.SYSTEM_FOCUS_LOSS)
+                        }
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                        AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                            hasAudioFocus = false
+                            try {
+                                if (mediaPlayer?.isPlaying == true) {
+                                    mediaPlayer?.pause()
+                                }
+                            } catch (_: Exception) {}
+                            onInterruptionCallback?.invoke(AudioInterruptionReason.SYSTEM_TRANSIENT_FOCUS_LOSS)
+                        }
                     }
                 }
                 .build()

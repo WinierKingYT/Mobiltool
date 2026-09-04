@@ -7,8 +7,7 @@ enum class AudioPlaybackPhase {
     PLAYING,
     PAUSED,
     COMPLETED,
-    ERROR,
-    RELEASED
+    ERROR
 }
 
 data class AudioPlaybackState(

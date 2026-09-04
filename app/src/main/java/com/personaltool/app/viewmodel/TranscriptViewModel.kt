@@ -20,6 +20,7 @@ import com.personaltool.transcription.api.TranscriptExporter
 import com.personaltool.transcription.api.TranscriptionEngine
 import com.personaltool.transcription.api.TranscriptionProgress
 import com.personaltool.transcription.api.TranscriptionRequest
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,16 +48,16 @@ class TranscriptViewModel(
     private val mediaDao: MediaDao,
     private val audioPlaybackController: AudioPlaybackController? = null,
     private val transcriptionEngine: TranscriptionEngine = DefaultTranscriptionEngine(),
-    coroutineScope: kotlinx.coroutines.CoroutineScope? = null
+    coroutineScope: CoroutineScope? = null
 ) : ViewModel() {
 
-    private val scope: kotlinx.coroutines.CoroutineScope = coroutineScope ?: viewModelScope
+    private val scope: CoroutineScope = coroutineScope ?: viewModelScope
 
     private val _uiState = MutableStateFlow(TranscriptViewerState())
     val uiState: StateFlow<TranscriptViewerState> = _uiState.asStateFlow()
 
     init {
-        // Observe real AudioPlaybackController state (zero synthetic timer)
+        // Observe real AudioPlaybackController state (zero synthetic timer, zero independent position authority)
         if (audioPlaybackController != null) {
             scope.launch {
                 audioPlaybackController.state.collect { playbackState ->
@@ -184,7 +185,7 @@ class TranscriptViewModel(
         }
     }
 
-    // Real Audio Playback & Seek Synchronizer
+    // Real Audio Playback & Seek Synchronizer (Delegates to AudioPlaybackController)
     fun togglePlayPause() {
         val state = _uiState.value
         val audioPath = state.audioFilePath
@@ -204,29 +205,25 @@ class TranscriptViewModel(
     }
 
     fun seekToPosition(positionMs: Long) {
-        val duration = _uiState.value.totalDurationMs.coerceAtLeast(1L)
+        val controller = audioPlaybackController ?: return
+        val duration = _uiState.value.totalDurationMs
+        if (duration <= 0L) return
+
         val clamped = positionMs.coerceIn(0L, duration)
-        audioPlaybackController?.seekTo(clamped)
-        _uiState.update {
-            it.copy(
-                currentPlaybackPositionMs = clamped,
-                activeSegmentId = findActiveSegment(it.transcript?.segments, clamped)
-            )
-        }
+        controller.seekTo(clamped)
+        // Position and activeSegmentId are updated exclusively via controller state flow observer
     }
 
     fun seekToSegment(segment: TranscriptSegment) {
-        val controller = audioPlaybackController
+        val controller = audioPlaybackController ?: return
         val state = _uiState.value
-        if (controller != null && !state.audioFilePath.isNullOrBlank()) {
-            if (controller.state.value.targetId != state.targetId) {
-                controller.openAudio(state.targetId ?: "", state.targetTitle, state.audioFilePath)
-            }
-            controller.seekTo(segment.startTimeMs)
-            controller.play()
-        } else {
-            seekToPosition(segment.startTimeMs)
+        if (state.audioFilePath.isNullOrBlank()) return
+
+        if (controller.state.value.targetId != state.targetId) {
+            controller.openAudio(state.targetId ?: "", state.targetTitle, state.audioFilePath)
         }
+        controller.seekTo(segment.startTimeMs)
+        controller.play()
     }
 
     fun findActiveSegment(segments: List<TranscriptSegment>?, positionMs: Long): String? {

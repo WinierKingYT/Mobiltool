@@ -1,6 +1,7 @@
 package com.personaltool.app.viewmodel
 
 import com.google.common.truth.Truth.assertThat
+import com.personaltool.app.audio.AudioInterruptionReason
 import com.personaltool.app.audio.AudioPlaybackController
 import com.personaltool.app.audio.AudioPlaybackPhase
 import com.personaltool.app.audio.FakeAudioPlaybackEngine
@@ -138,12 +139,12 @@ class TranscriptViewModelTest {
     private val mediaDao = FakeMediaDaoForTranscript()
     private val transcriptionEngine = NoOpTranscriptionEngine()
 
-    private fun createViewModel(): TranscriptViewModel {
+    private fun createViewModel(controller: AudioPlaybackController? = audioController): TranscriptViewModel {
         return TranscriptViewModel(
             transcriptDao = transcriptDao,
             callDao = callDao,
             mediaDao = mediaDao,
-            audioPlaybackController = audioController,
+            audioPlaybackController = controller,
             transcriptionEngine = transcriptionEngine,
             coroutineScope = scope
         )
@@ -209,8 +210,42 @@ class TranscriptViewModelTest {
         assertThat(audioController.state.value.phase).isEqualTo(AudioPlaybackPhase.IDLE)
     }
 
+    // ==========================================
+    // P3-E04-FINAL-04: TRANSCRIPT POSITION AUTHORITY TESTS
+    // ==========================================
+
     @Test
-    fun seekToPosition_drivesAudioController_andUpdatesActiveSegment() = runBlocking {
+    fun controllerLoading_seekRequested_transcriptPositionDoesNotJump() {
+        val file = createTempAudioFile()
+        val viewModel = createViewModel()
+
+        viewModel.openTranscript("target-1", "Alice", file.absolutePath, 10000L)
+        // Controller is in LOADING state (canSeek is false)
+
+        viewModel.seekToPosition(5000L)
+
+        assertThat(audioController.state.value.currentPositionMs).isEqualTo(0L)
+        assertThat(viewModel.uiState.value.currentPlaybackPositionMs).isEqualTo(0L)
+    }
+
+    @Test
+    fun engineSeekFailure_transcriptPositionDoesNotJump() {
+        val file = createTempAudioFile()
+        val viewModel = createViewModel()
+
+        viewModel.openTranscript("target-1", "Alice", file.absolutePath, 10000L)
+        fakeEngine.triggerPrepared(10000L)
+
+        fakeEngine.shouldFailSeek = true
+
+        viewModel.seekToPosition(5000L)
+
+        assertThat(audioController.state.value.currentPositionMs).isEqualTo(0L)
+        assertThat(viewModel.uiState.value.currentPlaybackPositionMs).isEqualTo(0L)
+    }
+
+    @Test
+    fun successfulSeek_updatesController_andTranscriptObserverUpdatesPositionAndSegment() = runBlocking {
         val file = createTempAudioFile()
         val viewModel = createViewModel()
 
@@ -239,6 +274,26 @@ class TranscriptViewModelTest {
     }
 
     @Test
+    fun noController_seekRequested_noFakeSeekState() {
+        val viewModel = createViewModel(controller = null)
+
+        viewModel.openTranscript("target-1", "Alice", null, 10000L)
+        viewModel.seekToPosition(5000L)
+
+        assertThat(viewModel.uiState.value.currentPlaybackPositionMs).isEqualTo(0L)
+    }
+
+    @Test
+    fun noAudioFile_seekRequested_noFakeSeekState() {
+        val viewModel = createViewModel()
+
+        viewModel.openTranscript("target-1", "Alice", null, 0L)
+        viewModel.seekToPosition(5000L)
+
+        assertThat(viewModel.uiState.value.currentPlaybackPositionMs).isEqualTo(0L)
+    }
+
+    @Test
     fun seekToSegment_seeksAndStartsPlayback() {
         val file = createTempAudioFile()
         val viewModel = createViewModel()
@@ -252,6 +307,28 @@ class TranscriptViewModelTest {
         assertThat(audioController.state.value.currentPositionMs).isEqualTo(5001L)
         assertThat(audioController.state.value.phase).isEqualTo(AudioPlaybackPhase.PLAYING)
         assertThat(viewModel.uiState.value.isPlaying).isTrue()
+    }
+
+    // ==========================================
+    // P3-E04-FINAL-03 & 05: INTERRUPTIONS & PRESENTATION OWNERSHIP
+    // ==========================================
+
+    @Test
+    fun focusLoss_propagatesToTranscriptPlayingState() {
+        val file = createTempAudioFile()
+        val viewModel = createViewModel()
+
+        viewModel.openTranscript("target-1", "Alice", file.absolutePath, 10000L)
+        fakeEngine.triggerPrepared(10000L)
+        viewModel.togglePlayPause()
+
+        assertThat(viewModel.uiState.value.isPlaying).isTrue()
+
+        // System focus loss
+        fakeEngine.triggerInterruption(AudioInterruptionReason.SYSTEM_FOCUS_LOSS)
+
+        assertThat(audioController.state.value.phase).isEqualTo(AudioPlaybackPhase.PAUSED)
+        assertThat(viewModel.uiState.value.isPlaying).isFalse()
     }
 
     @Test
@@ -268,5 +345,20 @@ class TranscriptViewModelTest {
         assertThat(viewModel.uiState.value.isOpen).isFalse()
         assertThat(viewModel.uiState.value.isPlaying).isFalse()
         assertThat(audioController.state.value.phase).isEqualTo(AudioPlaybackPhase.IDLE)
+    }
+
+    @Test
+    fun singlePresentationOwnership_ruleVerification() {
+        // Reducer-level verification of MainScreen presentation policy:
+        // Standalone player is visible ONLY when audio is not IDLE AND transcript sheet is NOT open.
+        fun shouldShowStandalonePlayer(phase: AudioPlaybackPhase, isTranscriptOpen: Boolean): Boolean {
+            return phase != AudioPlaybackPhase.IDLE && !isTranscriptOpen
+        }
+
+        assertThat(shouldShowStandalonePlayer(AudioPlaybackPhase.READY, isTranscriptOpen = false)).isTrue()
+        assertThat(shouldShowStandalonePlayer(AudioPlaybackPhase.PLAYING, isTranscriptOpen = false)).isTrue()
+        assertThat(shouldShowStandalonePlayer(AudioPlaybackPhase.PLAYING, isTranscriptOpen = true)).isFalse()
+        assertThat(shouldShowStandalonePlayer(AudioPlaybackPhase.LOADING, isTranscriptOpen = true)).isFalse()
+        assertThat(shouldShowStandalonePlayer(AudioPlaybackPhase.IDLE, isTranscriptOpen = false)).isFalse()
     }
 }

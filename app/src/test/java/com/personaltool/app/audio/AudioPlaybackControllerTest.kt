@@ -23,15 +23,18 @@ class FakeAudioPlaybackEngine : AudioPlaybackEngine {
     var onPreparedCallback: ((Long) -> Unit)? = null
     var onErrorCallback: ((String) -> Unit)? = null
     var onCompletionCallback: (() -> Unit)? = null
+    var onInterruptionCallback: ((AudioInterruptionReason) -> Unit)? = null
 
     var shouldThrowOnPrepare = false
     var shouldFailStart = false
+    var shouldFailSeek = false
 
     override fun prepare(
         filePath: String,
         onPrepared: (durationMs: Long) -> Unit,
         onError: (errorMessage: String) -> Unit,
-        onCompletion: () -> Unit
+        onCompletion: () -> Unit,
+        onInterruption: (AudioInterruptionReason) -> Unit
     ) {
         if (shouldThrowOnPrepare) {
             throw IllegalStateException("Forced prepare failure")
@@ -39,6 +42,7 @@ class FakeAudioPlaybackEngine : AudioPlaybackEngine {
         onPreparedCallback = onPrepared
         onErrorCallback = onError
         onCompletionCallback = onCompletion
+        onInterruptionCallback = onInterruption
         isPrepared = true
     }
 
@@ -57,6 +61,11 @@ class FakeAudioPlaybackEngine : AudioPlaybackEngine {
         onCompletionCallback?.invoke()
     }
 
+    fun triggerInterruption(reason: AudioInterruptionReason = AudioInterruptionReason.SYSTEM_FOCUS_LOSS) {
+        isPlaying = false
+        onInterruptionCallback?.invoke(reason)
+    }
+
     override fun start(): Boolean {
         if (shouldFailStart) return false
         isPlaying = true
@@ -69,6 +78,7 @@ class FakeAudioPlaybackEngine : AudioPlaybackEngine {
     }
 
     override fun seekTo(positionMs: Long): Boolean {
+        if (shouldFailSeek) return false
         fakeCurrentPosition = positionMs.coerceIn(0L, fakeDuration)
         return true
     }
@@ -220,7 +230,7 @@ class AudioPlaybackControllerTest {
     }
 
     @Test
-    fun error_transitionsToError_withErrorMessage() {
+    fun error_transitionsToError_withErrorMessage_andReleasesEngine() {
         val file = createTempAudioFile()
         val controller = createController()
 
@@ -231,6 +241,223 @@ class AudioPlaybackControllerTest {
         assertThat(state.phase).isEqualTo(AudioPlaybackPhase.ERROR)
         assertThat(state.errorMessage).isEqualTo("Decoder failure")
         assertThat(state.canPlay).isFalse()
+        assertThat(fakeEngine.releaseCount.get()).isEqualTo(1)
+    }
+
+    // ==========================================
+    // P3-E04-FINAL-01: SESSION GENERATION & STALE CALLBACK TESTS
+    // ==========================================
+
+    @Test
+    fun sameTarget_openedTwice_latePreparedFromFirstSession_doesNotAffectSecondSession() {
+        val file = createTempAudioFile("same.m4a")
+        val engine1 = FakeAudioPlaybackEngine()
+        val engine2 = FakeAudioPlaybackEngine()
+
+        var callCount = 0
+        val controller = AudioPlaybackController(
+            engineFactory = {
+                callCount++
+                if (callCount == 1) engine1 else engine2
+            },
+            coroutineScope = scope
+        )
+
+        // Open session 1
+        controller.openAudio("target-A", "Track A", file.absolutePath)
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.LOADING)
+
+        // Reopen same target -> session 2
+        controller.openAudio("target-A", "Track A", file.absolutePath)
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.LOADING)
+
+        // Session 1's onPrepared arrives late
+        engine1.triggerPrepared(30000L)
+
+        // Controller must still be in LOADING for session 2, not updated by stale session 1
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.LOADING)
+        assertThat(controller.state.value.durationMs).isEqualTo(0L)
+
+        // Now session 2's onPrepared arrives
+        engine2.triggerPrepared(60000L)
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.READY)
+        assertThat(controller.state.value.durationMs).isEqualTo(60000L)
+    }
+
+    @Test
+    fun differentTarget_opened_latePreparedFromFirstSession_doesNotAffectSecondSession() {
+        val fileA = createTempAudioFile("a.m4a")
+        val fileB = createTempAudioFile("b.m4a")
+        val engine1 = FakeAudioPlaybackEngine()
+        val engine2 = FakeAudioPlaybackEngine()
+
+        var callCount = 0
+        val controller = AudioPlaybackController(
+            engineFactory = {
+                callCount++
+                if (callCount == 1) engine1 else engine2
+            },
+            coroutineScope = scope
+        )
+
+        controller.openAudio("target-A", "Track A", fileA.absolutePath)
+        controller.openAudio("target-B", "Track B", fileB.absolutePath)
+
+        // Late prepared from A
+        engine1.triggerPrepared(30000L)
+        assertThat(controller.state.value.targetId).isEqualTo("target-B")
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.LOADING)
+    }
+
+    @Test
+    fun staleErrorCallback_doesNotSetNewSessionToError_andDoesNotReleaseNewEngine() {
+        val fileA = createTempAudioFile("a.m4a")
+        val fileB = createTempAudioFile("b.m4a")
+        val engine1 = FakeAudioPlaybackEngine()
+        val engine2 = FakeAudioPlaybackEngine()
+
+        var callCount = 0
+        val controller = AudioPlaybackController(
+            engineFactory = {
+                callCount++
+                if (callCount == 1) engine1 else engine2
+            },
+            coroutineScope = scope
+        )
+
+        controller.openAudio("target-A", "Track A", fileA.absolutePath)
+        controller.openAudio("target-B", "Track B", fileB.absolutePath)
+        engine2.triggerPrepared(60000L)
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.READY)
+
+        // Old engine 1 triggers error late
+        engine1.triggerError("Old error")
+
+        // New session must remain READY and engine2 must NOT be released
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.READY)
+        assertThat(controller.state.value.errorMessage).isNull()
+        assertThat(engine2.releaseCount.get()).isEqualTo(0)
+    }
+
+    @Test
+    fun staleCompletionCallback_doesNotSetNewSessionToCompleted() {
+        val fileA = createTempAudioFile("a.m4a")
+        val fileB = createTempAudioFile("b.m4a")
+        val engine1 = FakeAudioPlaybackEngine()
+        val engine2 = FakeAudioPlaybackEngine()
+
+        var callCount = 0
+        val controller = AudioPlaybackController(
+            engineFactory = {
+                callCount++
+                if (callCount == 1) engine1 else engine2
+            },
+            coroutineScope = scope
+        )
+
+        controller.openAudio("target-A", "Track A", fileA.absolutePath)
+        controller.openAudio("target-B", "Track B", fileB.absolutePath)
+        engine2.triggerPrepared(60000L)
+
+        // Old engine 1 triggers completion late
+        engine1.triggerCompletion()
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.READY)
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(0L)
+    }
+
+    @Test
+    fun release_invalidatesAllPendingCallbacks() {
+        val file = createTempAudioFile("rel.m4a")
+        val controller = createController()
+
+        controller.openAudio("target-1", "Track 1", file.absolutePath)
+        controller.release()
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.IDLE)
+
+        // Callbacks arrive after release
+        fakeEngine.triggerPrepared(50000L)
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.IDLE)
+
+        fakeEngine.triggerError("Post-release error")
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.IDLE)
+
+        fakeEngine.triggerCompletion()
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.IDLE)
+    }
+
+    // ==========================================
+    // P3-E04-FINAL-02: TERMINAL ERROR CLEANUP TESTS
+    // ==========================================
+
+    @Test
+    fun playing_terminalError_setsError_stopsPolling_releasesActiveEngine() {
+        val file = createTempAudioFile()
+        val controller = createController()
+
+        controller.openAudio("target-1", "Track 1", file.absolutePath)
+        fakeEngine.triggerPrepared(60000L)
+        controller.play()
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.PLAYING)
+
+        fakeEngine.triggerError("Hardware error")
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.ERROR)
+        assertThat(controller.state.value.errorMessage).isEqualTo("Hardware error")
+        assertThat(fakeEngine.releaseCount.get()).isEqualTo(1)
+
+        // Advance simulated time - polling must not update state
+        fakeEngine.fakeCurrentPosition = 9999L
+        runBlocking { delay(300) }
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(0L)
+    }
+
+    // ==========================================
+    // P3-E04-FINAL-03: AUDIO FOCUS PROPAGATION TESTS
+    // ==========================================
+
+    @Test
+    fun playing_systemFocusLoss_pausesController_andStopsPolling() {
+        val file = createTempAudioFile()
+        val controller = createController()
+
+        controller.openAudio("target-1", "Track 1", file.absolutePath)
+        fakeEngine.triggerPrepared(60000L)
+        controller.play()
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.PLAYING)
+
+        // System focus loss event
+        fakeEngine.triggerInterruption(AudioInterruptionReason.SYSTEM_FOCUS_LOSS)
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.PAUSED)
+        assertThat(controller.state.value.canPlay).isTrue()
+
+        // Advance simulated time - polling must not update state
+        fakeEngine.fakeCurrentPosition = 8888L
+        runBlocking { delay(300) }
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(0L)
+    }
+
+    @Test
+    fun playing_systemTransientFocusLoss_pausesController_andStopsPolling() {
+        val file = createTempAudioFile()
+        val controller = createController()
+
+        controller.openAudio("target-1", "Track 1", file.absolutePath)
+        fakeEngine.triggerPrepared(60000L)
+        controller.play()
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.PLAYING)
+
+        // Transient focus loss event
+        fakeEngine.triggerInterruption(AudioInterruptionReason.SYSTEM_TRANSIENT_FOCUS_LOSS)
+
+        assertThat(controller.state.value.phase).isEqualTo(AudioPlaybackPhase.PAUSED)
+        assertThat(controller.state.value.canPlay).isTrue()
     }
 
     // ==========================================

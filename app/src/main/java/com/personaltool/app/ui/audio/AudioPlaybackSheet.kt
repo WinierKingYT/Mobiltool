@@ -51,7 +51,7 @@ fun AudioPlaybackSheet(
 ) {
     val state by controller.state.collectAsState()
 
-    if (state.phase == AudioPlaybackPhase.IDLE || state.phase == AudioPlaybackPhase.RELEASED) {
+    if (state.phase == AudioPlaybackPhase.IDLE) {
         return
     }
 
@@ -138,7 +138,6 @@ fun AudioPlaybackSheet(
                         AudioPlaybackPhase.PAUSED -> "PAUSED" to BadgeSeverity.WARNING
                         AudioPlaybackPhase.COMPLETED -> "COMPLETED" to BadgeSeverity.INFO
                         AudioPlaybackPhase.ERROR -> "ERROR" to BadgeSeverity.DANGER
-                        AudioPlaybackPhase.RELEASED -> "RELEASED" to BadgeSeverity.MUTED
                     }
 
                     StatusBadge(text = badgeText, severity = badgeSeverity)
