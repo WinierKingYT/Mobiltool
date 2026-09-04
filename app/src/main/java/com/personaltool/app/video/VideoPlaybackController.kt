@@ -27,6 +27,10 @@ class VideoPlaybackController(
     private val engineFactory: () -> VideoPlaybackEngine,
     private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Main)
 ) {
+    companion object {
+        const val REWIND_CONFIRM_TOLERANCE_MS = 250L
+    }
+
     private var engine: VideoPlaybackEngine? = null
     private var progressJob: Job? = null
     private var sessionGeneration: Long = 0L
@@ -191,15 +195,30 @@ class VideoPlaybackController(
                             }
                             VideoPlaybackActivity.PAUSED -> {
                                 stopProgressPolling()
-                                if (_state.value.phase == VideoPlaybackPhase.PLAYING) {
-                                    val pos = currentEngine.getCurrentPosition()
-                                    _state.update { it.copy(phase = VideoPlaybackPhase.PAUSED, currentPositionMs = pos) }
+                                _state.update { current ->
+                                    when (current.phase) {
+                                        VideoPlaybackPhase.PLAYING, VideoPlaybackPhase.LOADING -> {
+                                            if (current.durationMs > 0L && current.targetId != null) {
+                                                val pos = currentEngine.getCurrentPosition()
+                                                current.copy(phase = VideoPlaybackPhase.PAUSED, currentPositionMs = pos)
+                                            } else {
+                                                current
+                                            }
+                                        }
+                                        VideoPlaybackPhase.READY -> current
+                                        VideoPlaybackPhase.COMPLETED -> current
+                                        else -> current
+                                    }
                                 }
                             }
                             VideoPlaybackActivity.BUFFERING -> {
                                 stopProgressPolling()
-                                if (_state.value.phase == VideoPlaybackPhase.PLAYING) {
-                                    _state.update { it.copy(phase = VideoPlaybackPhase.LOADING) }
+                                _state.update { current ->
+                                    if (current.phase == VideoPlaybackPhase.PLAYING) {
+                                        current.copy(phase = VideoPlaybackPhase.LOADING)
+                                    } else {
+                                        current
+                                    }
                                 }
                             }
                             VideoPlaybackActivity.ENDED -> {
@@ -210,15 +229,31 @@ class VideoPlaybackController(
                 },
                 onPositionDiscontinuity = { confirmedPositionMs ->
                     if (currentGen == sessionGeneration && engine === currentEngine) {
-                        _state.update { current ->
-                            current.copy(
-                                currentPositionMs = confirmedPositionMs,
-                                phase = if (current.phase == VideoPlaybackPhase.COMPLETED) VideoPlaybackPhase.READY else current.phase
-                            )
-                        }
                         if (pendingPlayOnRewind) {
-                            pendingPlayOnRewind = false
-                            currentEngine.requestPlay()
+                            if (confirmedPositionMs in 0L..REWIND_CONFIRM_TOLERANCE_MS) {
+                                pendingPlayOnRewind = false
+                                _state.update { current ->
+                                    current.copy(
+                                        currentPositionMs = confirmedPositionMs,
+                                        phase = VideoPlaybackPhase.READY
+                                    )
+                                }
+                                currentEngine.requestPlay()
+                            }
+                        } else {
+                            _state.update { current ->
+                                current.copy(
+                                    currentPositionMs = confirmedPositionMs,
+                                    phase = if (current.phase == VideoPlaybackPhase.COMPLETED) VideoPlaybackPhase.READY else current.phase
+                                )
+                            }
+                        }
+                    }
+                },
+                onVideoMetadataChanged = { width, height ->
+                    if (currentGen == sessionGeneration && engine === currentEngine) {
+                        _state.update { current ->
+                            current.copy(videoWidth = width, videoHeight = height)
                         }
                     }
                 }

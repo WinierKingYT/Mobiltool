@@ -28,6 +28,7 @@ class FakeVideoPlaybackEngine : VideoPlaybackEngine {
     var onCompletionCallback: (() -> Unit)? = null
     var onActivityChangedCallback: ((VideoPlaybackActivity) -> Unit)? = null
     var onPositionDiscontinuityCallback: ((Long) -> Unit)? = null
+    var onVideoMetadataChangedCallback: ((Int, Int) -> Unit)? = null
 
     var shouldThrowOnPrepare = false
     var shouldFailPlay = false
@@ -42,7 +43,8 @@ class FakeVideoPlaybackEngine : VideoPlaybackEngine {
         onError: (errorMessage: String) -> Unit,
         onCompletion: () -> Unit,
         onActivityChanged: (activity: VideoPlaybackActivity) -> Unit,
-        onPositionDiscontinuity: (confirmedPositionMs: Long) -> Unit
+        onPositionDiscontinuity: (confirmedPositionMs: Long) -> Unit,
+        onVideoMetadataChanged: (width: Int, height: Int) -> Unit
     ) {
         if (shouldThrowOnPrepare) {
             throw IllegalStateException("Forced prepare failure")
@@ -52,6 +54,7 @@ class FakeVideoPlaybackEngine : VideoPlaybackEngine {
         onCompletionCallback = onCompletion
         onActivityChangedCallback = onActivityChanged
         onPositionDiscontinuityCallback = onPositionDiscontinuity
+        onVideoMetadataChangedCallback = onVideoMetadataChanged
         isPrepared = true
     }
 
@@ -60,6 +63,12 @@ class FakeVideoPlaybackEngine : VideoPlaybackEngine {
         fakeWidth = width
         fakeHeight = height
         onPreparedCallback?.invoke(durationMs, width, height)
+    }
+
+    fun triggerVideoMetadata(width: Int, height: Int) {
+        fakeWidth = width
+        fakeHeight = height
+        onVideoMetadataChangedCallback?.invoke(width, height)
     }
 
     fun triggerError(errorMessage: String) {
@@ -307,7 +316,7 @@ class VideoPlaybackControllerTest {
     }
 
     @Test
-    fun completedReplay_whenRewindFails_doesNotStartAndRetainsCompletedPosition() {
+    fun completedReplay_whenRewindDiscontinuityIsNotZero_doesNotStartAndRetainsCompletedState() {
         val file = createValidMp4File()
         val controller = createController()
 
@@ -319,15 +328,114 @@ class VideoPlaybackControllerTest {
         assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.COMPLETED)
         assertThat(controller.state.value.currentPositionMs).isEqualTo(45000L)
 
-        // Force seek failure on rewind
-        fakeEngine.shouldFailSeek = true
+        // Disable auto-confirm seek and play
+        fakeEngine.autoConfirmSeekOnRequest = false
+        fakeEngine.autoConfirmActivityOnRequest = false
 
-        val started = controller.play()
+        val playAccepted = controller.play()
+        assertThat(playAccepted).isTrue()
 
-        assertThat(started).isFalse()
+        // Unrelated discontinuity event (e.g. 30000ms) arrives
+        fakeEngine.triggerPositionDiscontinuity(30000L)
+
+        // Playback MUST NOT start and completed state must NOT be corrupted
         assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.COMPLETED)
         assertThat(controller.state.value.currentPositionMs).isEqualTo(45000L)
         assertThat(fakeEngine.isPlaying).isFalse()
+
+        // Now confirmed near-zero discontinuity arrives
+        fakeEngine.triggerPositionDiscontinuity(50L)
+
+        // Replay transitions to READY, calls requestPlay(), and when engine emits PLAYING becomes PLAYING
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(50L)
+        fakeEngine.triggerActivity(VideoPlaybackActivity.PLAYING)
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.PLAYING)
+    }
+
+    @Test
+    fun lateVideoMetadataChanged_doesNotResetPositionOrPhase() {
+        val file = createValidMp4File()
+        val controller = createController()
+
+        controller.openVideo("vid-1", "Test Video", file.absolutePath)
+        fakeEngine.triggerPrepared(60000L, 1280, 720)
+
+        // Seek to 30s
+        controller.seekTo(30000L)
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(30000L)
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.READY)
+
+        // Late video dimensions update from engine
+        fakeEngine.triggerVideoMetadata(1920, 1080)
+
+        // Metadata must update without resetting position or phase
+        assertThat(controller.state.value.videoWidth).isEqualTo(1920)
+        assertThat(controller.state.value.videoHeight).isEqualTo(1080)
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(30000L)
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.READY)
+    }
+
+    @Test
+    fun playing_buffering_to_paused_transitionsToPaused_andStopsPolling() {
+        val file = createValidMp4File()
+        val controller = createController()
+
+        controller.openVideo("vid-1", "Test Video", file.absolutePath)
+        fakeEngine.triggerPrepared(60000L)
+        controller.play()
+
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.PLAYING)
+
+        // Buffering occurs during playback
+        fakeEngine.fakeCurrentPosition = 20000L
+        fakeEngine.triggerActivity(VideoPlaybackActivity.BUFFERING)
+
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.LOADING)
+
+        // Engine transitions from buffering to paused (e.g. user or focus loss paused during buffer)
+        fakeEngine.triggerActivity(VideoPlaybackActivity.PAUSED)
+
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.PAUSED)
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(20000L)
+        assertThat(controller.state.value.canPlay).isTrue()
+    }
+
+    @Test
+    fun initialReady_engineEmitsPaused_remainsReady() {
+        val file = createValidMp4File()
+        val controller = createController()
+
+        controller.openVideo("vid-1", "Test Video", file.absolutePath)
+        fakeEngine.triggerPrepared(60000L)
+
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.READY)
+
+        // Initial paused event from engine prior to user pressing play
+        fakeEngine.triggerActivity(VideoPlaybackActivity.PAUSED)
+
+        // Must remain READY
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.READY)
+        assertThat(controller.state.value.canPlay).isTrue()
+    }
+
+    @Test
+    fun completed_engineEmitsPaused_remainsCompleted() {
+        val file = createValidMp4File()
+        val controller = createController()
+
+        controller.openVideo("vid-1", "Test Video", file.absolutePath)
+        fakeEngine.triggerPrepared(60000L)
+        controller.play()
+        fakeEngine.triggerCompletion()
+
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.COMPLETED)
+
+        // Stale paused event from engine after completion
+        fakeEngine.triggerActivity(VideoPlaybackActivity.PAUSED)
+
+        // Must remain COMPLETED
+        assertThat(controller.state.value.phase).isEqualTo(VideoPlaybackPhase.COMPLETED)
+        assertThat(controller.state.value.currentPositionMs).isEqualTo(60000L)
     }
 
     // ==========================================

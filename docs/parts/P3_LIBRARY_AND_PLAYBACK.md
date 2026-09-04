@@ -1,4 +1,4 @@
-﻿# P3 — Library & Playback
+# P3 — Library & Playback
 
 Status: ACTIVE / IN_PROGRESS
 
@@ -23,7 +23,7 @@ Unified media vault and audio/video playback engine.
 [X] ExoPlayer setup exception release protection
 [X] Reactive Room DB flow combine (Calls + Media)
 [X] Dynamic multi-criteria search and category filtering
-[X] 273/273 unit tests passing across all modules
+[X] 277/277 unit tests passing across all modules
 [X] assembleDebug APK compilation succeeded
 [ ] Physical Device Playback Qualification on Samsung Galaxy S22
 ```

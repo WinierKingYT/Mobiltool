@@ -1,4 +1,4 @@
-﻿# P3 — Library & Playback Verification Evidence
+# P3 — Library & Playback Verification Evidence
 
 ## Baseline & Verification Status
 
@@ -16,7 +16,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 
 * **Command**: `.\gradlew.bat test` / `.\gradlew.bat testDebugUnitTest`
 * **Result**: `BUILD SUCCESSFUL` (0 failures, 0 errors, 0 skipped)
-* **Total Repository Unit Tests**: 273 tests
+* **Total Repository Unit Tests**: 277 tests across 31 unique suites
 
 ### Breakdown by Module & Suite:
 
@@ -24,7 +24,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 |---|---|---|---|
 | `:app` | `AudioPlaybackControllerTest` | 25 | PASS |
 | `:app` | `RealAudioPlayerTest` | 3 | PASS |
-| `:app` | `VideoPlaybackControllerTest` | 29 | PASS |
+| `:app` | `VideoPlaybackControllerTest` | 33 | PASS |
 | `:app` | `VaultItemEvaluatorTest` | 21 | PASS |
 | `:app` | `LibraryViewModelTest` | 15 | PASS |
 | `:app` | `TranscriptViewModelTest` | 13 | PASS |
@@ -44,7 +44,7 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 | `:desktop-bridge` | `PtyTerminalNormalizerTest`, `VirtualScreenCoordinateTransformerTest` | 4 | PASS |
 | `:media-extractor-api` | `HttpMediaProberTest`, `MediaFileValidatorTest`, `NetworkSecurityPolicyTest`, `RealHttpStreamDownloaderTest`, `SafeHttpTransportTest`, `UrlClassifierTest`, `YouTubeExtractorTest` | 89 | PASS |
 | `:transcription-api` | `DefaultTranscriptionEngineTest`, `TranscriptExporterTest` | 7 | PASS |
-| **Total** | **22 Suites** | **273** | **PASS** |
+| **Total** | **31 Unique Suites** | **277** | **PASS** |
 
 ---
 
@@ -62,19 +62,21 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
 
 ---
 
-## 3. Video Playback Subsystem Architecture & Evidence (Remediation Hardened)
+## 3. Video Playback Subsystem Architecture & Evidence (Truth-Lock Hardened)
 
 * **Core Components**:
-  - `AndroidMedia3VideoEngine`: Media3 ExoPlayer (v1.5.1) engine implementing `VideoPlaybackEngine` with `C.AUDIO_CONTENT_TYPE_MOVIE`, `Player.Listener`, `onIsPlayingChanged`, `onPositionDiscontinuity`, `onPlaybackStateChanged`, and setup exception leak release protection.
-  - `VideoPlaybackController`: Action-time file validation (`VideoPlaybackSource` checking container signatures, size match, `NOT_READY` precedence), `sessionGeneration` stale callback dropping, authoritative playing activity handling, asynchronous seek confirmation, replay rewind confirmation, and progress tracking.
+  - `AndroidMedia3VideoEngine`: Media3 ExoPlayer (v1.5.1) engine implementing `VideoPlaybackEngine` with `C.AUDIO_CONTENT_TYPE_MOVIE`, `Player.Listener`, `onIsPlayingChanged`, `onPositionDiscontinuity`, `onVideoSizeChanged` -> `onVideoMetadataChanged`, `onPlaybackStateChanged`, and setup exception leak release protection.
+  - `VideoPlaybackController`: Action-time file validation (`VideoPlaybackSource` checking container signatures, size match, `NOT_READY` precedence), `sessionGeneration` stale callback dropping, authoritative playing activity handling, asynchronous seek confirmation, replay rewind confirmation tolerance (`0L..250L`), decoupled metadata updates, buffering-to-paused transition safety, and progress tracking.
   - `VideoPlaybackViewer`: Fullscreen Compose HUD overlay surface with `AndroidView(factory = { PlayerView(...) })`, video aspect ratio preservation, retro-industrial controls (play/pause, seek slider, speed selector, timecode displays, system telemetry).
   - `MainScreen`: Presentation mutual exclusion (video viewer releases audio player; audio player / transcript viewer releases video player).
 * **Evidence Labels**:
   - `MEDIA3 AUTHORITATIVE PLAYING`: **PASS** (Controller `PLAYING` phase and progress polling are driven strictly by engine `onActivityChanged(PLAYING)`)
   - `MEDIA3 ASYNCHRONOUS SEEK CONFIRMATION`: **PASS** (`currentPositionMs` updates only upon engine `onPositionDiscontinuity`)
-  - `COMPLETED REPLAY REWIND`: **PASS** (Replay requests rewind to 0 and waits for confirmed rewind before starting playback)
+  - `COMPLETED REPLAY REWIND CONFIRMATION`: **PASS** (Replay requests rewind to 0 and starts only upon confirmed discontinuity within `0..250ms`; non-zero discontinuity rejects start and preserves completed state)
+  - `DECOUPLED VIDEO METADATA UPDATE`: **PASS** (Late video dimensions update dimensions without resetting position or phase)
+  - `BUFFERING TO PAUSED RESILIENCE`: **PASS** (Transition from `LOADING` / buffering to `PAUSED` captures current position and transitions phase safely)
   - `ACTION-TIME PREFLIGHT VALIDATION`: **PASS** (Rejects random-byte `.mp4`, size mismatch, `NOT_READY`, `.part`, `.tmp`, or missing files)
-  - `EXOPLAYER SETUP LEAK PROTECTION`: **PASS** (Guarantees player release on setup exception)
+  - `EXOPLAYER SETUP LEAK PROTECTION`: **PASS** (Guarantees local player release on setup exception before assignment)
   - `VIDEO ACTION ROUTING`: **PASS** (`VaultPrimaryAction.PLAY_VIDEO` bound strictly to `MediaType.VIDEO` + `VaultFileState.AVAILABLE`)
 
 ---

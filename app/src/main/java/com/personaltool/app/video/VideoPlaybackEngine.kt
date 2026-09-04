@@ -14,7 +14,8 @@ interface VideoPlaybackEngine {
         onError: (errorMessage: String) -> Unit,
         onCompletion: () -> Unit,
         onActivityChanged: (activity: VideoPlaybackActivity) -> Unit = {},
-        onPositionDiscontinuity: (confirmedPositionMs: Long) -> Unit = {}
+        onPositionDiscontinuity: (confirmedPositionMs: Long) -> Unit = {},
+        onVideoMetadataChanged: (width: Int, height: Int) -> Unit = { _, _ -> }
     )
     fun requestPlay(): Boolean
     fun requestPause(): Boolean

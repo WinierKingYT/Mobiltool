@@ -30,7 +30,8 @@ class AndroidMedia3VideoEngine(
         onError: (errorMessage: String) -> Unit,
         onCompletion: () -> Unit,
         onActivityChanged: (activity: VideoPlaybackActivity) -> Unit,
-        onPositionDiscontinuity: (confirmedPositionMs: Long) -> Unit
+        onPositionDiscontinuity: (confirmedPositionMs: Long) -> Unit,
+        onVideoMetadataChanged: (width: Int, height: Int) -> Unit
     ) {
         release()
 
@@ -51,7 +52,6 @@ class AndroidMedia3VideoEngine(
                 .setAudioAttributes(audioAttributes, true)
                 .build()
             localPlayer = player
-            exoPlayer = player
 
             player.addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(playbackState: Int) {
@@ -104,7 +104,7 @@ class AndroidMedia3VideoEngine(
                         videoWidth = videoSize.width
                         videoHeight = videoSize.height
                         if (isPrepared) {
-                            onPrepared(durationMs, videoWidth, videoHeight)
+                            onVideoMetadataChanged(videoWidth, videoHeight)
                         }
                     }
                 }
@@ -117,6 +117,10 @@ class AndroidMedia3VideoEngine(
             val mediaItem = MediaItem.fromUri(Uri.fromFile(file))
             player.setMediaItem(mediaItem)
             player.prepare()
+
+            // Setup succeeded: transfer ownership to field
+            exoPlayer = localPlayer
+            localPlayer = null
         } catch (e: Exception) {
             try {
                 localPlayer?.apply {
@@ -127,7 +131,8 @@ class AndroidMedia3VideoEngine(
                 }
             } catch (_: Exception) {
             }
-            release()
+            localPlayer = null
+            exoPlayer = null
             onError("Failed to setup video player: ${e.message}")
         }
     }
