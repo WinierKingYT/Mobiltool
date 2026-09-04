@@ -56,7 +56,8 @@ ROOM DB SCHEMA VERSION = 1 (STRICTLY UNCHANGED)
   - `AudioPlaybackSheet`: Industrial-styled Compose audio playback UI surface.
 * **Evidence Labels**:
   - `AUDIO INTERRUPTION CONTRACT TESTS`: **PASS**
-  - `ANDROID AUDIO FOCUS ENGINE INTEGRATION`: **PASS** (Physical hardware tested on SM-S901E)
+  - `ANDROID AUDIO FOCUS ENGINE INTEGRATION`: **CODE_REVIEWED_NOT_RUNTIME_TESTED**
+  - `PHYSICAL AUDIO FOCUS INTERRUPTION`: **NOT RUN**
   - `SEEK TRUTH / FAIL-CLOSED INVARIANT`: **PASS** (Seek failure rejects state change and aborts play-after-seek)
   - `TRANSCRIPT POSITION DERIVATION`: **PASS** (Derives active cue dynamically from verified audio position)
 
