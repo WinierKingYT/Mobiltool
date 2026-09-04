@@ -383,8 +383,7 @@ class VaultItemEvaluatorTest {
     }
 
     @Test
-    fun media_validVideo_evaluatesToAvailable_withPlaybackUnboundUntilE05() {
-        // Truthful: fileState is AVAILABLE, but primaryAction is UNAVAILABLE until video engine binding in E05
+    fun media_validVideo_evaluatesToAvailable_andPlayVideoAction() {
         val file = createValidMp4File("valid_video.mp4", size = 4096)
         val item = MediaItem(
             id = "media-6",
@@ -398,7 +397,7 @@ class VaultItemEvaluatorTest {
 
         val vaultMedia = evaluator.evaluateMedia(item)
         assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.AVAILABLE)
-        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.UNAVAILABLE)
+        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.PLAY_VIDEO)
         assertThat(vaultMedia.availableSizeBytes).isEqualTo(4096L)
     }
 
@@ -437,6 +436,7 @@ class VaultItemEvaluatorTest {
 
         val vaultMedia = evaluator.evaluateMedia(item)
         assertThat(vaultMedia.fileState).isEqualTo(VaultFileState.AVAILABLE)
+        assertThat(vaultMedia.primaryAction).isEqualTo(VaultPrimaryAction.PLAY_VIDEO)
         assertThat(vaultMedia.hasTranscript).isTrue()
     }
 }

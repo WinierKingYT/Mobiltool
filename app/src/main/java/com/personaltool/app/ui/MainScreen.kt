@@ -70,6 +70,7 @@ fun MainScreen(
 
     val desktopState by remoteDesktopViewModel.uiState.collectAsState()
     val transcriptState by transcriptViewModel.uiState.collectAsState()
+    val videoPlaybackState by app.videoPlaybackController.state.collectAsState()
 
     var currentTab by remember {
         mutableStateOf(if (sharedUrl != null) MainNavigationTab.MEDIA else MainNavigationTab.CALLS)
@@ -79,11 +80,10 @@ fun MainScreen(
     val typography = IndustrialTheme.typography
 
     if (desktopState.isViewerOpen) {
-        // Fullscreen Remote Desktop LAN Viewer (M9)
         RemoteDesktopViewerScreen(viewModel = remoteDesktopViewModel)
     } else {
         Column(
-            modifier = modifier
+            modifier = Modifier
                 .fillMaxSize()
                 .background(colors.background)
         ) {
@@ -93,7 +93,9 @@ fun MainScreen(
                 systemTag = "${currentTab.index} // ${currentTab.systemTag}"
             )
 
-            // Screen Content
+            CopperDivider()
+
+            // Active Tab Content Surface
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -103,6 +105,7 @@ fun MainScreen(
                     MainNavigationTab.CALLS -> CallsScreen(
                         viewModel = callsViewModel,
                         onOpenTranscript = { targetId, title, audioPath, durationMs ->
+                            app.videoPlaybackController.release()
                             transcriptViewModel.openTranscript(targetId, title, audioPath, durationMs)
                         }
                     )
@@ -113,12 +116,15 @@ fun MainScreen(
                     MainNavigationTab.LIBRARY -> LibraryScreen(
                         viewModel = libraryViewModel,
                         onPlayAudio = { targetId, title, audioPath, durationMs ->
+                            app.videoPlaybackController.release()
                             app.audioPlaybackController.openAudio(targetId, title, audioPath)
                         },
                         onPlayVideo = { targetId, title, filePath ->
-                            // Video playback engine unbound until P3-E05
+                            app.audioPlaybackController.release()
+                            app.videoPlaybackController.openVideo(targetId, title, filePath)
                         },
                         onOpenTranscript = { targetId, title, audioPath, durationMs ->
+                            app.videoPlaybackController.release()
                             transcriptViewModel.openTranscript(targetId, title, audioPath, durationMs)
                         }
                     )
@@ -175,8 +181,8 @@ fun MainScreen(
             }
         }
 
-        // Foreground Audio Playback Sheet (suppressed when transcript viewer sheet owns presentation)
-        if (!transcriptState.isOpen) {
+        // Foreground Audio Playback Sheet (suppressed when transcript or video viewer owns presentation)
+        if (!transcriptState.isOpen && videoPlaybackState.phase == com.personaltool.app.video.VideoPlaybackPhase.IDLE) {
             AudioPlaybackSheet(
                 controller = app.audioPlaybackController,
                 onDismiss = { app.audioPlaybackController.release() }
@@ -185,5 +191,11 @@ fun MainScreen(
 
         // Modal Transcript Viewer Sheet
         TranscriptViewerSheet(viewModel = transcriptViewModel)
+
+        // Fullscreen Video Playback Viewer
+        com.personaltool.app.ui.video.VideoPlaybackViewer(
+            controller = app.videoPlaybackController,
+            onDismiss = { app.videoPlaybackController.release() }
+        )
     }
 }

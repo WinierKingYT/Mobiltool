@@ -31,6 +31,12 @@ class PersonalToolApplication : Application() {
         )
     }
 
+    val videoPlaybackController: com.personaltool.app.video.VideoPlaybackController by lazy {
+        com.personaltool.app.video.VideoPlaybackController(
+            engineFactory = { com.personaltool.app.video.AndroidMedia3VideoEngine(this) }
+        )
+    }
+
     override fun onCreate() {
         super.onCreate()
 

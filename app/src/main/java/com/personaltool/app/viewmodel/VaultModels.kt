@@ -247,7 +247,7 @@ class DefaultVaultItemEvaluator(
 
         return when (item.mediaType) {
             MediaType.AUDIO_ONLY -> VaultPrimaryAction.PLAY_AUDIO
-            MediaType.VIDEO -> VaultPrimaryAction.UNAVAILABLE // Truthful: video playback engine unbound until P3-E05
+            MediaType.VIDEO -> VaultPrimaryAction.PLAY_VIDEO
             else -> VaultPrimaryAction.UNAVAILABLE
         }
     }

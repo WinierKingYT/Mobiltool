@@ -1,8 +1,8 @@
-# Active Part
+﻿# Active Part
 
 ```text
 ACTIVE_PART = P3
-STATUS = IN_PROGRESS
+STATUS = LOCKED / PASS
 ```
 
 ## Part Sequencing & Lifecycle State:
@@ -17,41 +17,34 @@ STATUS = IN_PROGRESS
   - YouTube (ADR_002 APPROVED): SUPPORTED / QUALIFIED FOR PUBLIC CONTENT (`NewPipeExtractor:v0.26.5` behind strict `YouTubeExtractor` adapter + Mobiltool verified atomic downloader)
   - Instagram & X (Twitter): EXTRACTION_UNAVAILABLE / NOT APPROVED (Fails closed with `ErrorCode.EXTRACTION_FAILED`)
   - Verification: 100% deterministic offline suite (`.\gradlew.bat test`), live qualification tasks (`realDirectMediaTest`, `realYouTubeExtractionTest`)
-- **P3: Library & Playback** - ACTIVE / IN_PROGRESS
-- **P4: Local Transcription** - LOCKED
+- **P3: Library & Playback** - LOCKED / PASS
+  - Unified Vault: Reactive Room DB combine (`CallEntity` + `MediaEntity`), fast bounded-prefix file inspection (<= 768 bytes, zero SHA-256 in UI thread), two-stage pipeline (zero disk I/O on query/filtering).
+  - Audio Playback: Full lifecycle coroutine controller (`AudioPlaybackController`), `sessionGeneration`, fail-closed seek, audio focus interruption handling, speed control (0.5x..2.0x), transcript position synchronization, industrial UI playback sheet.
+  - Video Playback: Media3 ExoPlayer 1.5.1 engine (`AndroidMedia3VideoEngine`), `VideoPlaybackController`, action-time file validation (rejection of `.part`/`.tmp`), fullscreen HUD viewer (`VideoPlaybackViewer`), presentation mutual exclusion.
+  - Verification: 267/267 unit tests passing across 22 suites, clean `assembleDebug`.
+- **P4: Local Transcription** - LOCKED / AWAITING USER ACTIVATION
 - **P5+: Core Foundation, Dev Bridge, Remote Desktop** - LOCKED
 
 ---
 
-## P2 Final Capability Matrix:
-* **Direct Public HTTP/HTTPS**: SUPPORTED / QUALIFIED (SSRF defense, `ValidatedDns`, .part staging, SHA-256 verification, `StandardCopyOption.ATOMIC_MOVE`).
-* **YouTube**: SUPPORTED / QUALIFIED FOR PUBLIC CONTENT (ADR_002 approved, stable upstream itags, pure JVM `NewPipeExtractor:v0.26.5` adapter, zero stream fallbacks, fail-closed on unknown itags).
-* **Instagram**: EXTRACTION_UNAVAILABLE / NOT APPROVED.
-* **X / Twitter**: EXTRACTION_UNAVAILABLE / NOT APPROVED.
+## P3 Retained Invariants:
+* `PLAY_AUDIO != OPEN_TRANSCRIPT`
+* `PLAY_VIDEO != OPEN_TRANSCRIPT`
+* `EXISTS != PLAYABLE` (File must be validated before opening player)
+* `STAGING / TEMP FILES (.part, .tmp) MUST NEVER BE OPENED IN PLAYERS`
+* `ENGINE SEEK FAILURE -> CONTROLLER MUST NOT CLAIM SEEK SUCCESS`
+* `VIDEO PLAYBACK != VLC / FFMPEG PLAYER` (Strict Media3 ExoPlayer integration)
+* `SEARCH / FILTER QUERY CHANGE -> ZERO DISK I/O`
+* `ROOM DB SCHEMA VERSION = 1` (Zero entity / DAO / DB version modifications in P3)
 
 ---
 
-## P2 Retained Invariants:
-* `RECOGNIZED URL != SUPPORTED EXTRACTION`
-* `EXTRACTED STREAM != SUCCESSFUL DOWNLOAD`
-* `HTTP 200 != VALID MEDIA`
-* `FILE EXISTS != VALID MEDIA`
-* `TRACK TYPE UNKNOWN -> MIME MUST NOT CLAIM AUDIO/VIDEO`
-* `USER SELECTED FORMAT == EXACT RESOLVED ITAG`
-* `NO EXACT FORMAT -> FAIL CLOSED`
-* `UNKNOWN / UNSTABLE ITAG -> DO NOT EXPOSE AS SELECTABLE FORMAT`
-* `CANONICAL MEDIA -> ONLY AFTER VALIDATION + HASH + ATOMIC COMMIT`
-* `HTTP CONTENT-TYPE != MEDIA PAYLOAD PROOF`
-
----
-
-## P2 Evidence Record:
-* **Baseline HEAD**: `1613ba8c2f8651cefdd4a2fead72e3d7ce3836fd`
-* **Post-Lock Regression Hardening Commits**: `e15a893`, `970c66e`
+## P3 Evidence Record:
+* **Evidence Document**: [docs/P3_PLAYBACK_EVIDENCE.md](file:///c:/Users/ahmet/Desktop/aramakay%C4%B1t/docs/P3_PLAYBACK_EVIDENCE.md)
 * **Build**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat clean assembleDebug`)
-* **Media Unit Tests**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat :media-extractor-api:test` - 77 offline tests)
-* **Full Unit Tests**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat test` - 219 tasks across all modules)
-* **Real Direct Evidence**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat :media-extractor-api:realDirectMediaTest` - 834,563 bytes, SHA-256 `d0502ba7...`, `MEDIA KIND: UNKNOWN`, `DETECTED MIME: null`, `ATOMIC_MOVE`)
-* **Real YouTube Evidence**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat :media-extractor-api:realYouTubeExtractionTest` - Short probe & Video download 117,526 bytes, SHA-256 `193a32b4...`, `MEDIA KIND: UNKNOWN`, `MIME TYPE: null`, `ATOMIC_MOVE`)
-* **Independent Remote Code Review**: PASS
+* **Full Unit Tests**: PASS - LOCAL EXECUTION EVIDENCE (`.\gradlew.bat test` - 267 unit tests passing)
+* **Attached Hardware Target**: Samsung Galaxy S22 (`SM-S901E`, Android 16 / SDK 36) attached via wireless ADB
+* **Audio Interruption Tests**: PASS
+* **Android Audio Focus Engine Integration**: CODE_REVIEWED_NOT_RUNTIME_TESTED
+* **Media3 ExoPlayer Integration**: PASS
 * **GitHub CI**: NOT CONFIGURED / NO REMOTE STATUS CHECK EVIDENCE
